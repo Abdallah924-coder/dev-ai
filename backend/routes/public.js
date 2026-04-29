@@ -21,6 +21,14 @@ const newsletterLimiter = rateLimit({
   message: { error: 'Trop de tentatives d’inscription. Réessayez plus tard.' },
 });
 
+function queueEmail(task, label) {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[DevAI] ${label}:`, error.message);
+    });
+}
+
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
 }
@@ -76,11 +84,7 @@ router.post('/newsletter', newsletterLimiter, async (req, res, next) => {
     });
 
     await sendNewsletterNotificationEmail({ email: cleanEmail });
-    try {
-      await sendNewsletterSubscriberEmail({ email: cleanEmail });
-    } catch (emailErr) {
-      console.error('[DevAI] Newsletter subscriber email error:', emailErr.message);
-    }
+    queueEmail(() => sendNewsletterSubscriberEmail({ email: cleanEmail }), 'Newsletter subscriber email error');
 
     res.status(201).json({ message: 'Inscription newsletter enregistrée.' });
   } catch (err) { next(err); }

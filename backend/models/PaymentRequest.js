@@ -67,9 +67,14 @@ const paymentRequestSchema = new mongoose.Schema({
     trim: true,
     maxlength: 1200,
   },
+  proofData: {
+    type: Buffer,
+    default: null,
+    select: false,
+  },
   proofPath: {
     type: String,
-    required: true,
+    default: '',
     trim: true,
     maxlength: 260,
   },

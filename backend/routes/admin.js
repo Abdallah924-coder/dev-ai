@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const PaymentRequest = require('../models/PaymentRequest');
@@ -13,6 +14,14 @@ const {
 } = require('../utils/email');
 
 const router = express.Router();
+
+function queueEmail(task, label) {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[DevAI] ${label}:`, error.message);
+    });
+}
 
 function getAdminPassword() {
   return String(process.env.ADMIN_PASSWORD || '').trim();
@@ -93,15 +102,31 @@ router.get('/payment-requests', adminAuth, async (req, res, next) => {
 
 router.get('/payment-requests/:id/proof', adminAuth, async (req, res, next) => {
   try {
-    const paymentRequest = await PaymentRequest.findById(req.params.id);
+    const paymentRequest = await PaymentRequest.findById(req.params.id).select('+proofData');
     if (!paymentRequest) {
       return res.status(404).json({ error: 'Demande introuvable.' });
     }
 
-    return res.sendFile(path.resolve(paymentRequest.proofPath), {
-      headers: {
-        'Content-Type': paymentRequest.proofMimeType,
-      },
+    if (paymentRequest.proofData?.length) {
+      res.setHeader('Content-Type', paymentRequest.proofMimeType);
+      res.setHeader('Content-Disposition', `inline; filename="${paymentRequest.proofOriginalName}"`);
+      return res.send(paymentRequest.proofData);
+    }
+
+    if (paymentRequest.proofPath) {
+      const resolvedPath = path.resolve(paymentRequest.proofPath);
+      if (fs.existsSync(resolvedPath)) {
+        return res.sendFile(resolvedPath, {
+          headers: {
+            'Content-Type': paymentRequest.proofMimeType,
+            'Content-Disposition': `inline; filename="${paymentRequest.proofOriginalName}"`,
+          },
+        });
+      }
+    }
+
+    return res.status(410).json({
+      error: 'La preuve enregistrée n’est plus disponible sur le serveur. Les nouvelles preuves sont désormais stockées en base.',
     });
   } catch (err) { next(err); }
 });
@@ -130,16 +155,12 @@ router.post('/payment-requests/:id/approve', adminAuth, async (req, res, next) =
     paymentRequest.adminNote = String(req.body.adminNote || '').trim();
     await paymentRequest.save();
 
-    try {
-      await sendPaymentApprovedEmail({
+    queueEmail(() => sendPaymentApprovedEmail({
         to: user.email,
         firstname: user.firstname,
         planLabel: paymentRequest.planLabel,
         usage: buildUsageSnapshot(user),
-      });
-    } catch (emailErr) {
-      console.error('[DevAI] Payment approved email error:', emailErr.message);
-    }
+      }), 'Payment approved email error');
 
     res.json({
       message: 'Paiement approuvé et crédits appliqués.',
@@ -165,16 +186,12 @@ router.post('/payment-requests/:id/reject', adminAuth, async (req, res, next) =>
     paymentRequest.adminNote = String(req.body.adminNote || '').trim();
     await paymentRequest.save();
 
-    try {
-      await sendPaymentRejectedEmail({
+    queueEmail(() => sendPaymentRejectedEmail({
         to: paymentRequest.user.email,
         firstname: paymentRequest.user.firstname,
         planLabel: paymentRequest.planLabel,
         adminNote: paymentRequest.adminNote,
-      });
-    } catch (emailErr) {
-      console.error('[DevAI] Payment rejected email error:', emailErr.message);
-    }
+      }), 'Payment rejected email error');
 
     res.json({ message: 'Demande rejetée.' });
   } catch (err) { next(err); }

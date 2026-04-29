@@ -42,6 +42,14 @@ function serializeUser(user) {
   };
 }
 
+function queueEmail(task, label) {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[DevAI] ${label}:`, error.message);
+    });
+}
+
 // ══════════════════════════════════════
 // POST /api/auth/register
 // ══════════════════════════════════════
@@ -62,15 +70,11 @@ router.post('/register', async (req, res, next) => {
     const token = signToken(user._id);
     const frontendUrl = getFrontendUrl(req);
 
-    try {
-      await sendWelcomeEmail({
+    queueEmail(() => sendWelcomeEmail({
         to: user.email,
         firstname: user.firstname,
         loginUrl: `${frontendUrl}/app.html`,
-      });
-    } catch (emailErr) {
-      console.error('[DevAI] Welcome email error:', emailErr.message);
-    }
+      }), 'Welcome email error');
 
     res.status(201).json({
       message: 'Compte créé avec succès.',
@@ -111,9 +115,14 @@ router.post('/login', async (req, res, next) => {
       return res.status(401).json({ error: 'E-mail ou mot de passe incorrect.' });
     }
 
-    // Mettre à jour la date de dernière connexion
     user.lastLoginAt = Date.now();
-    await user.save({ validateBeforeSave: false });
+    User.updateOne(
+      { _id: user._id },
+      { $set: { lastLoginAt: user.lastLoginAt } },
+      { runValidators: false }
+    ).catch((error) => {
+      console.error('[DevAI] Last login update error:', error.message);
+    });
 
     const token = signToken(user._id);
 

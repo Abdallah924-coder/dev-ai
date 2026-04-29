@@ -1,17 +1,30 @@
+const fetch = require('node-fetch');
 const nodemailer = require('nodemailer');
 
 function createTransporter() {
   if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error('Configuration email incomplète.');
+    throw new Error('Configuration email SMTP incomplète.');
   }
+
+  const port = parseInt(process.env.EMAIL_PORT, 10) || 587;
+  const secure = process.env.EMAIL_SECURE != null
+    ? String(process.env.EMAIL_SECURE).toLowerCase() === 'true'
+    : port === 465;
 
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST,
-    port: parseInt(process.env.EMAIL_PORT, 10) || 587,
-    secure: String(process.env.EMAIL_PORT) === '465',
+    port,
+    secure,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
+    },
+    requireTLS: !secure,
+    connectionTimeout: parseInt(process.env.EMAIL_CONNECTION_TIMEOUT_MS, 10) || 15000,
+    greetingTimeout: parseInt(process.env.EMAIL_GREETING_TIMEOUT_MS, 10) || 15000,
+    socketTimeout: parseInt(process.env.EMAIL_SOCKET_TIMEOUT_MS, 10) || 20000,
+    tls: {
+      minVersion: 'TLSv1.2',
     },
   });
 }
@@ -20,8 +33,47 @@ function getFromAddress() {
   return process.env.EMAIL_FROM || 'DevAI <noreply@worldifyai.com>';
 }
 
+function parseMailbox(value) {
+  const input = String(value || '').trim();
+  const match = input.match(/^(?:"?([^"]*)"?\s)?<([^>]+)>$/);
+
+  if (match) {
+    return {
+      name: String(match[1] || '').trim(),
+      email: String(match[2] || '').trim(),
+    };
+  }
+
+  return {
+    name: '',
+    email: input,
+  };
+}
+
 function getAdminInbox() {
-  return process.env.CONTACT_RECEIVER_EMAIL || process.env.EMAIL_USER;
+  return process.env.CONTACT_RECEIVER_EMAIL || process.env.EMAIL_USER || parseMailbox(getFromAddress()).email;
+}
+
+function getFrontendUrl() {
+  return String(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+}
+
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 function renderLogoSvg() {
@@ -110,12 +162,103 @@ function renderEmailLayout({ eyebrow, title, intro, bodyHtml, ctaLabel, ctaUrl, 
 </html>`;
 }
 
-async function sendEmail(mailOptions) {
+function getBrevoApiKey() {
+  return String(process.env.BREVO_API_KEY || '').trim();
+}
+
+async function sendEmailThroughBrevo(mailOptions) {
+  const apiKey = getBrevoApiKey();
+  if (!apiKey) {
+    throw new Error('BREVO_API_KEY non configurée.');
+  }
+
+  const from = parseMailbox(getFromAddress());
+  const to = parseMailbox(mailOptions.to);
+  const replyTo = mailOptions.replyTo ? parseMailbox(mailOptions.replyTo) : null;
+  const payload = {
+    sender: {
+      email: from.email,
+      ...(from.name ? { name: from.name } : {}),
+    },
+    to: [
+      {
+        email: to.email,
+        ...(to.name ? { name: to.name } : {}),
+      },
+    ],
+    subject: mailOptions.subject,
+    htmlContent: mailOptions.html,
+    textContent: mailOptions.text || stripHtml(mailOptions.html),
+  };
+
+  if (replyTo?.email) {
+    payload.replyTo = {
+      email: replyTo.email,
+      ...(replyTo.name ? { name: replyTo.name } : {}),
+    };
+  }
+
+  const response = await fetch(process.env.BREVO_API_URL || 'https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'api-key': apiKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const raw = await response.text();
+    let message = `Brevo HTTP ${response.status}`;
+
+    try {
+      const data = JSON.parse(raw);
+      message = data.message || data.code || message;
+    } catch {
+      if (raw) message = raw;
+    }
+
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+}
+
+async function sendEmailThroughSmtp(mailOptions) {
   const transporter = createTransporter();
   await transporter.sendMail({
     from: getFromAddress(),
     ...mailOptions,
   });
+}
+
+async function sendEmail(mailOptions) {
+  if (getBrevoApiKey()) {
+    try {
+      await sendEmailThroughBrevo(mailOptions);
+      return;
+    } catch (error) {
+      console.error('[DevAI Email] Brevo HTTP error:', {
+        status: error.status,
+        message: error.message,
+      });
+      throw error;
+    }
+  }
+
+  try {
+    await sendEmailThroughSmtp(mailOptions);
+  } catch (error) {
+    console.error('[DevAI Email] SMTP error:', {
+      host: process.env.EMAIL_HOST,
+      port: process.env.EMAIL_PORT || '587',
+      secure: process.env.EMAIL_SECURE != null ? process.env.EMAIL_SECURE : undefined,
+      code: error.code,
+      message: error.message,
+    });
+    throw error;
+  }
 }
 
 async function sendResetEmail({ to, firstname, resetUrl }) {
@@ -203,7 +346,7 @@ async function sendNewsletterSubscriberEmail({ email }) {
         <p class="meta">Vous recevrez les prochaines annonces produit, evolutions importantes et nouvelles disponibilites.</p>
       `,
       ctaLabel: 'Ouvrir DevAI',
-      ctaUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+      ctaUrl: getFrontendUrl(),
       footerNote: 'Si vous n etes pas a l origine de cette inscription, vous pouvez ignorer cet e-mail.',
     }),
   });
@@ -272,7 +415,7 @@ async function sendPaymentApprovedEmail({ to, firstname, planLabel, usage }) {
         <p class="meta">Vous pouvez retourner sur DevAI et continuer vos conversations.</p>
       `,
       ctaLabel: 'Ouvrir DevAI',
-      ctaUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/app.html`,
+      ctaUrl: `${getFrontendUrl()}/app.html`,
       footerNote: 'Merci de votre confiance.',
     }),
   });
@@ -291,7 +434,7 @@ async function sendPaymentRejectedEmail({ to, firstname, planLabel, adminNote })
         <p><strong>Motif / note admin :</strong><br>${escapeHtml(adminNote || 'Veuillez soumettre une preuve plus claire.').replace(/\n/g, '<br>')}</p>
       `,
       ctaLabel: 'Soumettre une nouvelle preuve',
-      ctaUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment.html`,
+      ctaUrl: `${getFrontendUrl()}/payment.html`,
       footerNote: 'Vous pouvez refaire une demande avec une preuve plus complète.',
     }),
   });

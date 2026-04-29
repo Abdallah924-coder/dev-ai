@@ -1,6 +1,4 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const authMW = require('../middleware/auth');
 const PaymentRequest = require('../models/PaymentRequest');
 const {
@@ -14,13 +12,16 @@ const {
 } = require('../utils/email');
 
 const router = express.Router();
-const PROOF_DIR = path.join(__dirname, '..', 'uploads', 'payment-proofs');
 const MAX_PROOF_SIZE_BYTES = 2 * 1024 * 1024;
 
 router.use(authMW);
 
-function ensureProofDir() {
-  fs.mkdirSync(PROOF_DIR, { recursive: true });
+function queueEmail(task, label) {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[DevAI] ${label}:`, error.message);
+    });
 }
 
 function parseDataUrl(dataUrl) {
@@ -50,16 +51,13 @@ function getFileExtension(mimeType) {
   return 'jpg';
 }
 
-function saveProofImage({ userId, proofDataUrl, originalName }) {
-  ensureProofDir();
+function saveProofImage({ proofDataUrl, originalName }) {
   const { mimeType, buffer } = parseDataUrl(proofDataUrl);
   const extension = getFileExtension(mimeType);
-  const fileName = `${userId}-${Date.now()}.${extension}`;
-  const absolutePath = path.join(PROOF_DIR, fileName);
-  fs.writeFileSync(absolutePath, buffer);
 
   return {
-    proofPath: absolutePath,
+    proofData: buffer,
+    proofPath: '',
     proofMimeType: mimeType,
     proofOriginalName: String(originalName || `preuve.${extension}`).slice(0, 180),
   };
@@ -115,7 +113,6 @@ router.post('/payment-requests', async (req, res, next) => {
     }
 
     const proof = saveProofImage({
-      userId: req.user._id,
       proofDataUrl,
       originalName: proofOriginalName,
     });
@@ -135,8 +132,7 @@ router.post('/payment-requests', async (req, res, next) => {
       ...proof,
     });
 
-    try {
-      await sendPaymentRequestAdminEmail({
+    queueEmail(() => sendPaymentRequestAdminEmail({
         requestId: paymentRequest._id,
         userEmail: req.user.email,
         userName: `${req.user.firstname} ${req.user.lastname}`.trim(),
@@ -145,20 +141,13 @@ router.post('/payment-requests', async (req, res, next) => {
         payerPhone: paymentRequest.payerPhone,
         paymentReference: paymentRequest.paymentReference,
         note: paymentRequest.note,
-      });
-    } catch (emailErr) {
-      console.error('[DevAI] Payment admin email error:', emailErr.message);
-    }
+      }), 'Payment admin email error');
 
-    try {
-      await sendPaymentRequestUserEmail({
+    queueEmail(() => sendPaymentRequestUserEmail({
         to: req.user.email,
         firstname: req.user.firstname,
         planLabel: paymentRequest.planLabel,
-      });
-    } catch (emailErr) {
-      console.error('[DevAI] Payment user email error:', emailErr.message);
-    }
+      }), 'Payment user email error');
 
     res.status(201).json({
       message: 'Demande de paiement envoyée. Elle sera validée manuellement.',
