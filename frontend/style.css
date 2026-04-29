@@ -1428,3 +1428,10 @@ body {
     width: 100%;
   }
 }
+
+/* ── Portal pages ── */
+body.portal-page-body {
+  height: auto;
+  min-height: 100vh;
+  overflow-y: auto;
+}

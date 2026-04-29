@@ -11,6 +11,8 @@ if (!token) {
 }
 
 function resolveApiUrl() {
+  if (window.DEVAI_API_URL) return stripTrailingSlash(window.DEVAI_API_URL);
+
   const { protocol, hostname, origin } = window.location;
   if (protocol === 'file:') return 'http://localhost:5000/api';
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0') {
@@ -18,6 +20,16 @@ function resolveApiUrl() {
   }
   return `${origin}/api`;
 }
+
+function stripTrailingSlash(url) {
+  return String(url).replace(/\/+$/, '');
+}
+
+// La page paiement doit pouvoir défiler sur desktop et mobile.
+document.documentElement.style.overflow = 'auto';
+document.body.style.overflow = 'auto';
+document.body.style.height = 'auto';
+document.body.style.minHeight = '100vh';
 
 async function api(method, path, body = null) {
   const res = await fetch(`${API_URL}${path}`, {

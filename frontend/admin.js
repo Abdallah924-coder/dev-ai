@@ -5,12 +5,18 @@ const STORAGE_KEY = 'devai_admin_token';
 let adminToken = localStorage.getItem(STORAGE_KEY) || '';
 
 function resolveApiUrl() {
+  if (window.DEVAI_API_URL) return stripTrailingSlash(window.DEVAI_API_URL);
+
   const { protocol, hostname, origin } = window.location;
   if (protocol === 'file:') return 'http://localhost:5000/api';
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0') {
     return `${protocol}//${hostname}:5000/api`;
   }
   return `${origin}/api`;
+}
+
+function stripTrailingSlash(url) {
+  return String(url).replace(/\/+$/, '');
 }
 
 async function api(method, path, body = null, isBlob = false) {
