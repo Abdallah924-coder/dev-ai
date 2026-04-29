@@ -51,6 +51,7 @@ let state = {
   lastReplyMeta: null,
   usage: null,
   paymentPlans: [],
+  pendingVerificationEmail: '',
 };
 let insightsHideTimer = null;
 
@@ -115,11 +116,8 @@ async function doRegister() {
     const btn = document.querySelector('#panel-register .btn-primary');
     setBtn(btn, true, 'Inscription…');
     const data = await api('POST', '/auth/register', { firstname: fn, lastname: ln, email: em, password: pw });
-    beginSession(data.user, data.token);
-    startOnboarding({
-      preferredName: fn,
-      birthDate: '',
-    });
+    state.pendingVerificationEmail = data.email || em;
+    showVerificationPanel(state.pendingVerificationEmail, 'Un code de vérification a été envoyé.');
     setBtn(btn, false, "S'inscrire");
   } catch (e) {
     showError(err, e.message);
@@ -142,6 +140,13 @@ async function doLogin() {
     const data = await api('POST', '/auth/login', { email: em, password: pw });
     loginUser(data.user, data.token);
   } catch (e) {
+    if (e.status === 403 && e.payload?.verificationRequired) {
+      state.pendingVerificationEmail = e.payload.email || em;
+      showVerificationPanel(state.pendingVerificationEmail, e.message);
+      const btn = document.querySelector('#panel-login .btn-primary');
+      setBtn(btn, false, 'Se connecter');
+      return;
+    }
     showError(err, e.message);
     const btn = document.querySelector('#panel-login .btn-primary');
     setBtn(btn, false, 'Se connecter');
@@ -161,17 +166,74 @@ async function doForgot() {
     setBtn(btn, true, 'Envoi…');
     await api('POST', '/auth/forgot-password', { email: em });
     suc.textContent = `✓ Si ce compte existe, un email a été envoyé à ${em}.`;
-    setBtn(btn, false, 'Envoyer le lien');
+    setBtn(btn, false, 'Envoyer le code');
+    window.location.href = `reset-password.html?email=${encodeURIComponent(em)}`;
   } catch (e) {
     showError(err, e.message);
     const btn = document.querySelector('#panel-forgot .btn-primary');
-    setBtn(btn, false, 'Envoyer le lien');
+    setBtn(btn, false, 'Envoyer le code');
+  }
+}
+
+async function verifyEmailOtp() {
+  const email = state.pendingVerificationEmail || $('reg-email').value.trim() || $('login-email').value.trim();
+  const otp = $('verify-otp').value.trim();
+  const err = $('verify-error');
+  const suc = $('verify-success');
+  err.textContent = '';
+  suc.textContent = '';
+
+  if (!isValidEmail(email)) return showError(err, 'Adresse e-mail invalide.');
+  if (!otp) return showError(err, 'Le code OTP est requis.');
+
+  try {
+    const btn = $('btn-verify-email');
+    setBtn(btn, true, 'Vérification…');
+    const data = await api('POST', '/auth/verify-email', { email, otp });
+    state.pendingVerificationEmail = '';
+    beginSession(data.user, data.token);
+    state.currentUser = data.user;
+    if (!data.user.onboardingCompleted) {
+      startOnboarding({
+        preferredName: data.user.preferredName || data.user.firstname || '',
+        birthDate: formatDateInputValue(data.user.birthDate),
+      });
+    } else {
+      await finishOnboarding();
+    }
+    setBtn(btn, false, 'Vérifier le code');
+  } catch (e) {
+    showError(err, e.message);
+    setBtn($('btn-verify-email'), false, 'Vérifier le code');
+  }
+}
+
+async function resendVerificationOtp() {
+  const email = state.pendingVerificationEmail || $('reg-email').value.trim() || $('login-email').value.trim();
+  const err = $('verify-error');
+  const suc = $('verify-success');
+  err.textContent = '';
+  suc.textContent = '';
+
+  if (!isValidEmail(email)) return showError(err, 'Adresse e-mail invalide.');
+
+  try {
+    const btn = $('btn-verify-email');
+    setBtn(btn, true, 'Envoi…');
+    await api('POST', '/auth/resend-verification-otp', { email });
+    state.pendingVerificationEmail = email;
+    $('verify-email-target').textContent = email;
+    suc.textContent = 'Un nouveau code a été envoyé.';
+    setBtn(btn, false, 'Vérifier le code');
+  } catch (e) {
+    showError(err, e.message);
+    setBtn($('btn-verify-email'), false, 'Vérifier le code');
   }
 }
 
 function doLogout() {
   localStorage.removeItem('devai_token');
-  state = { currentUser: null, token: null, conversations: [], activeConvId: null, currentMode: 'standard', onboardingDraft: null, lastReplyMeta: null, usage: null, paymentPlans: [] };
+  state = { currentUser: null, token: null, conversations: [], activeConvId: null, currentMode: 'standard', onboardingDraft: null, lastReplyMeta: null, usage: null, paymentPlans: [], pendingVerificationEmail: '' };
   resetUiState();
   $('app').classList.add('hidden');
   $('auth-overlay').style.display = 'flex';
@@ -184,6 +246,17 @@ function beginSession(user, token) {
   state.currentUser = user;
   state.token       = token;
   localStorage.setItem('devai_token', token);
+}
+
+function showVerificationPanel(email, message = '') {
+  resetUiState();
+  $('auth-overlay').style.display = 'flex';
+  $('app').classList.add('hidden');
+  $('verify-email-target').textContent = email || 'ton adresse';
+  $('verify-otp').value = '';
+  $('verify-error').textContent = '';
+  $('verify-success').textContent = message;
+  showPanel('panel-verify-email');
 }
 
 function getDisplayName() {

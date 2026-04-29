@@ -261,23 +261,8 @@ async function sendEmail(mailOptions) {
   }
 }
 
-async function sendResetEmail({ to, firstname, resetUrl }) {
-  await sendEmail({
-    to,
-    subject: 'Réinitialisation de votre mot de passe DevAI',
-    html: renderEmailLayout({
-      eyebrow: 'Sécurité du compte',
-      title: `Bonjour ${firstname},`,
-      intro: 'Vous avez demandé la réinitialisation de votre mot de passe. Nous avons préparé un lien sécurisé pour continuer.',
-      bodyHtml: `
-        <p>Pour définir un nouveau mot de passe, cliquez sur le bouton ci-dessous.</p>
-        <p class="meta">Ce lien est valable pendant 1 heure. Si vous n’êtes pas à l’origine de cette demande, vous pouvez simplement ignorer cet e-mail.</p>
-      `,
-      ctaLabel: 'Réinitialiser mon mot de passe',
-      ctaUrl: resetUrl,
-      footerNote: 'DevAI ne vous demandera jamais votre mot de passe par e-mail.',
-    }),
-  });
+async function sendResetEmail({ to, firstname, otp, expiresInMinutes }) {
+  return sendPasswordResetOtpEmail({ to, firstname, otp, expiresInMinutes });
 }
 
 async function sendWelcomeEmail({ to, firstname, loginUrl }) {
@@ -295,6 +280,42 @@ async function sendWelcomeEmail({ to, firstname, loginUrl }) {
       ctaLabel: 'Ouvrir DevAI',
       ctaUrl: loginUrl,
       footerNote: 'Merci de faire confiance à WorldifyAI.',
+    }),
+  });
+}
+
+async function sendVerificationOtpEmail({ to, firstname, otp, expiresInMinutes }) {
+  await sendEmail({
+    to,
+    subject: 'Code de vérification DevAI',
+    html: renderEmailLayout({
+      eyebrow: 'Vérification e-mail',
+      title: `Bonjour ${firstname},`,
+      intro: 'Voici votre code OTP pour confirmer votre adresse e-mail et activer votre compte DevAI.',
+      bodyHtml: `
+        <p>Entrez ce code dans le formulaire de vérification :</p>
+        <p style="font-size:32px; letter-spacing:0.2em; font-weight:700; color:#ffffff; text-align:center; margin:18px 0;">${escapeHtml(otp)}</p>
+        <p class="meta">Ce code expire dans ${escapeHtml(String(expiresInMinutes || 10))} minutes. Si vous n’avez pas demandé ce compte, ignorez simplement cet e-mail.</p>
+      `,
+      footerNote: 'DevAI utilise ce code pour vérifier que vous contrôlez bien cette adresse e-mail.',
+    }),
+  });
+}
+
+async function sendPasswordResetOtpEmail({ to, firstname, otp, expiresInMinutes }) {
+  await sendEmail({
+    to,
+    subject: 'Code de réinitialisation DevAI',
+    html: renderEmailLayout({
+      eyebrow: 'Réinitialisation du mot de passe',
+      title: `Bonjour ${firstname},`,
+      intro: 'Voici votre code OTP pour réinitialiser le mot de passe de votre compte DevAI.',
+      bodyHtml: `
+        <p>Utilisez ce code dans la page de réinitialisation :</p>
+        <p style="font-size:32px; letter-spacing:0.2em; font-weight:700; color:#ffffff; text-align:center; margin:18px 0;">${escapeHtml(otp)}</p>
+        <p class="meta">Ce code expire dans ${escapeHtml(String(expiresInMinutes || 10))} minutes. Si vous n’avez pas demandé cette action, vous pouvez ignorer cet e-mail.</p>
+      `,
+      footerNote: 'Pour votre sécurité, ne partagez jamais ce code.',
     }),
   });
 }
@@ -451,6 +472,8 @@ function escapeHtml(value) {
 module.exports = {
   sendResetEmail,
   sendWelcomeEmail,
+  sendVerificationOtpEmail,
+  sendPasswordResetOtpEmail,
   sendContactEmail,
   sendNewsletterNotificationEmail,
   sendNewsletterSubscriberEmail,

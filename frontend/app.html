@@ -86,17 +86,37 @@
     </div>
   </div>
 
+  <div id="panel-verify-email" class="auth-panel auth-panel-wide">
+    <div class="auth-step">Étape 2 sur 2</div>
+    <h1 class="auth-title">Vérifie ton e-mail.</h1>
+    <p class="auth-desc">
+      Nous avons envoyé un code OTP à <strong id="verify-email-target">ton adresse</strong>.
+      Saisis-le pour activer ton compte.
+    </p>
+    <div class="field-group">
+      <label>Code OTP</label>
+      <input type="text" id="verify-otp" placeholder="123456" inputmode="numeric" autocomplete="one-time-code" maxlength="8"/>
+    </div>
+    <div class="auth-error" id="verify-error"></div>
+    <div class="auth-success" id="verify-success"></div>
+    <button class="btn-primary" id="btn-verify-email" onclick="verifyEmailOtp()">Vérifier le code</button>
+    <div class="auth-links">
+      <span onclick="resendVerificationOtp()">Renvoyer le code</span>
+      <span onclick="showPanel('panel-register')">Changer d’adresse</span>
+    </div>
+  </div>
+
   <!-- Forgot Password Panel -->
   <div id="panel-forgot" class="auth-panel">
     <h1 class="auth-title">Réinitialiser.</h1>
-    <p class="auth-desc">Entrez votre e-mail pour recevoir un lien de réinitialisation.</p>
+    <p class="auth-desc">Entrez votre e-mail pour recevoir un code OTP de réinitialisation.</p>
     <div class="field-group">
       <label>Adresse e-mail</label>
       <input type="email" id="forgot-email" placeholder="vous@exemple.com"/>
     </div>
     <div class="auth-error" id="forgot-error"></div>
     <div class="auth-success" id="forgot-success"></div>
-    <button class="btn-primary" id="btn-forgot" onclick="doForgot()">Envoyer le lien</button>
+    <button class="btn-primary" id="btn-forgot" onclick="doForgot()">Envoyer le code</button>
     <div class="auth-links">
       <span onclick="showPanel('panel-login')">← Retour à la connexion</span>
     </div>

@@ -30,6 +30,10 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  emailVerified: {
+    type: Boolean,
+    default: false,
+  },
   email: {
     type: String,
     required: [true, 'L\'e-mail est requis.'],
@@ -38,14 +42,16 @@ const userSchema = new mongoose.Schema({
     trim: true,
     match: [/^\S+@\S+\.\S+$/, 'Adresse e-mail invalide.'],
   },
+  emailVerificationOtpHash: { type: String, select: false, default: '' },
+  emailVerificationOtpExpiresAt: { type: Date, select: false, default: null },
+  passwordResetOtpHash: { type: String, select: false, default: '' },
+  passwordResetOtpExpiresAt: { type: Date, select: false, default: null },
   password: {
     type: String,
     required: [true, 'Le mot de passe est requis.'],
     minlength: [6, 'Mot de passe trop court (6 caractères minimum).'],
     select: false, // Jamais renvoyé dans les requêtes par défaut
   },
-  resetPasswordToken:   { type: String,  select: false },
-  resetPasswordExpires: { type: Date,    select: false },
   usage: {
     freeMessagesPerWindow: { type: Number, default: 20, min: 0 },
     freeWindowHours: { type: Number, default: 5, min: 1 },
@@ -67,6 +73,10 @@ const userSchema = new mongoose.Schema({
   toJSON: {
     transform(_, ret) {
       delete ret.password;
+      delete ret.emailVerificationOtpHash;
+      delete ret.emailVerificationOtpExpiresAt;
+      delete ret.passwordResetOtpHash;
+      delete ret.passwordResetOtpExpiresAt;
       delete ret.__v;
       return ret;
     }

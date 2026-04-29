@@ -5,10 +5,16 @@ const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
 const User     = require('../models/User');
 const authMW   = require('../middleware/auth');
-const { sendResetEmail, sendWelcomeEmail } = require('../utils/email');
+const {
+  sendWelcomeEmail,
+  sendVerificationOtpEmail,
+  sendPasswordResetOtpEmail,
+} = require('../utils/email');
 const { refreshUsage, buildUsageSnapshot, listPaymentPlans } = require('../services/billingService');
 
 const router = express.Router();
+const OTP_TTL_MINUTES = parseInt(process.env.EMAIL_OTP_TTL_MINUTES, 10) || 10;
+const OTP_LENGTH = parseInt(process.env.EMAIL_OTP_LENGTH, 10) || 6;
 
 function getFrontendUrl(req) {
   if (process.env.FRONTEND_URL) {
@@ -37,9 +43,31 @@ function serializeUser(user) {
     preferredName: user.preferredName || '',
     birthDate: user.birthDate,
     onboardingCompleted: Boolean(user.onboardingCompleted),
+    emailVerified: user.emailVerified !== false,
     email: user.email,
     usage: buildUsageSnapshot(user),
   };
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function generateOtp(length = OTP_LENGTH) {
+  const digits = Math.max(4, Math.min(8, parseInt(length, 10) || 6));
+  const max = 10 ** digits;
+  return String(crypto.randomInt(0, max)).padStart(digits, '0');
+}
+
+function hashOtp({ purpose, email, otp }) {
+  return crypto
+    .createHash('sha256')
+    .update(`${purpose}:${normalizeEmail(email)}:${String(otp).trim()}`)
+    .digest('hex');
+}
+
+function buildOtpExpiry() {
+  return new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 }
 
 function queueEmail(task, label) {
@@ -48,6 +76,42 @@ function queueEmail(task, label) {
     .catch((error) => {
       console.error(`[DevAI] ${label}:`, error.message);
     });
+}
+
+async function loadUserByEmail(email, projection = '') {
+  return User.findOne({ email: normalizeEmail(email) }).select(projection);
+}
+
+function setVerificationOtp(user, otp) {
+  user.emailVerificationOtpHash = hashOtp({
+    purpose: 'verify-email',
+    email: user.email,
+    otp,
+  });
+  user.emailVerificationOtpExpiresAt = buildOtpExpiry();
+}
+
+function clearVerificationOtp(user) {
+  user.emailVerificationOtpHash = '';
+  user.emailVerificationOtpExpiresAt = null;
+}
+
+function setPasswordResetOtp(user, otp) {
+  user.passwordResetOtpHash = hashOtp({
+    purpose: 'reset-password',
+    email: user.email,
+    otp,
+  });
+  user.passwordResetOtpExpiresAt = buildOtpExpiry();
+}
+
+function clearPasswordResetOtp(user) {
+  user.passwordResetOtpHash = '';
+  user.passwordResetOtpExpiresAt = null;
+}
+
+function isOtpExpired(expiresAt) {
+  return !expiresAt || new Date(expiresAt).getTime() <= Date.now();
 }
 
 // ══════════════════════════════════════
@@ -61,25 +125,40 @@ router.post('/register', async (req, res, next) => {
       return res.status(400).json({ error: 'Tous les champs sont requis.' });
     }
 
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    const cleanEmail = normalizeEmail(email);
+    const exists = await User.findOne({ email: cleanEmail });
     if (exists) {
       return res.status(409).json({ error: 'Un compte existe déjà avec cet e-mail.' });
     }
 
-    const user = await User.create({ firstname, lastname, email, password });
-    const token = signToken(user._id);
-    const frontendUrl = getFrontendUrl(req);
+    const user = await User.create({
+      firstname,
+      lastname,
+      email: cleanEmail,
+      password,
+      emailVerified: false,
+    });
+    const otp = generateOtp();
+    setVerificationOtp(user, otp);
+    await user.save({ validateBeforeSave: false });
 
-    queueEmail(() => sendWelcomeEmail({
+    try {
+      await sendVerificationOtpEmail({
         to: user.email,
         firstname: user.firstname,
-        loginUrl: `${frontendUrl}/app.html`,
-      }), 'Welcome email error');
+        otp,
+        expiresInMinutes: OTP_TTL_MINUTES,
+      });
+    } catch (emailErr) {
+      await User.deleteOne({ _id: user._id });
+      console.error('[DevAI] Verification email error:', emailErr.message);
+      return res.status(502).json({ error: 'Impossible d’envoyer le code de vérification. Réessayez.' });
+    }
 
     res.status(201).json({
-      message: 'Compte créé avec succès.',
-      token,
-      user: serializeUser(user),
+      message: 'Compte créé. Un code de vérification a été envoyé par e-mail.',
+      verificationRequired: true,
+      email: user.email,
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -105,9 +184,17 @@ router.post('/login', async (req, res, next) => {
     }
 
     // Sélectionner le password (exclu par défaut)
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    const user = await User.findOne({ email: normalizeEmail(email) }).select('+password +emailVerificationOtpHash +emailVerificationOtpExpiresAt');
     if (!user) {
       return res.status(401).json({ error: 'E-mail ou mot de passe incorrect.' });
+    }
+
+    if (user.emailVerified === false) {
+      return res.status(403).json({
+        error: 'Veuillez vérifier votre adresse e-mail avant de vous connecter.',
+        verificationRequired: true,
+        email: user.email,
+      });
     }
 
     const valid = await user.comparePassword(password);
@@ -134,44 +221,124 @@ router.post('/login', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.post('/resend-verification-otp', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    const user = await loadUserByEmail(email, '+emailVerificationOtpHash +emailVerificationOtpExpiresAt');
+    if (!user) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' });
+    }
+    if (user.emailVerified !== false) {
+      return res.status(409).json({ error: 'Ce compte est déjà vérifié.' });
+    }
+
+    const otp = generateOtp();
+    setVerificationOtp(user, otp);
+    await user.save({ validateBeforeSave: false });
+
+    try {
+      await sendVerificationOtpEmail({
+        to: user.email,
+        firstname: user.firstname,
+        otp,
+        expiresInMinutes: OTP_TTL_MINUTES,
+      });
+    } catch (emailErr) {
+      console.error('[DevAI] Verification resend email error:', emailErr.message);
+      return res.status(502).json({ error: 'Impossible de renvoyer le code. Réessayez.' });
+    }
+
+    res.json({ message: 'Un nouveau code de vérification a été envoyé.' });
+  } catch (err) { next(err); }
+});
+
+router.post('/verify-email', async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+    const cleanEmail = normalizeEmail(email);
+    const cleanOtp = String(otp || '').trim();
+
+    if (!cleanEmail || !cleanOtp) {
+      return res.status(400).json({ error: 'E-mail et code OTP requis.' });
+    }
+
+    const user = await User.findOne({ email: cleanEmail }).select('+emailVerificationOtpHash +emailVerificationOtpExpiresAt');
+    if (!user) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' });
+    }
+    if (user.emailVerified !== false) {
+      return res.json({
+        message: 'Compte déjà vérifié.',
+        token: signToken(user._id),
+        user: serializeUser(user),
+      });
+    }
+    if (isOtpExpired(user.emailVerificationOtpExpiresAt)) {
+      return res.status(400).json({ error: 'Code expiré. Demandez un nouveau code.' });
+    }
+
+    const expectedHash = hashOtp({
+      purpose: 'verify-email',
+      email: user.email,
+      otp: cleanOtp,
+    });
+    if (user.emailVerificationOtpHash !== expectedHash) {
+      return res.status(400).json({ error: 'Code OTP invalide.' });
+    }
+
+    user.emailVerified = true;
+    clearVerificationOtp(user);
+    await user.save({ validateBeforeSave: false });
+
+    queueEmail(() => sendWelcomeEmail({
+      to: user.email,
+      firstname: user.firstname,
+      loginUrl: `${getFrontendUrl(req)}/app.html`,
+    }), 'Welcome email error');
+
+    const token = signToken(user._id);
+    res.json({
+      message: 'Adresse e-mail vérifiée avec succès.',
+      token,
+      user: serializeUser(user),
+    });
+  } catch (err) { next(err); }
+});
+
 // ══════════════════════════════════════
 // POST /api/auth/forgot-password
 // ══════════════════════════════════════
 router.post('/forgot-password', async (req, res, next) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'E-mail requis.' });
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) return res.status(400).json({ error: 'E-mail requis.' });
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+resetPasswordToken +resetPasswordExpires');
+    const user = await User.findOne({ email: cleanEmail }).select('+passwordResetOtpHash +passwordResetOtpExpiresAt');
 
     // Répondre toujours OK (sécurité : ne pas révéler si le compte existe)
     if (!user) {
-      return res.json({ message: 'Si ce compte existe, un email a été envoyé.' });
+      return res.json({ message: 'Si ce compte existe, un code a été envoyé.' });
     }
 
-    // Générer un token sécurisé
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    user.resetPasswordToken   = crypto.createHash('sha256').update(resetToken).digest('hex');
-    user.resetPasswordExpires = Date.now() + 60 * 60 * 1000; // 1 heure
+    const otp = generateOtp();
+    setPasswordResetOtp(user, otp);
     await user.save({ validateBeforeSave: false });
 
-    const resetUrl = `${getFrontendUrl(req)}/reset-password.html?token=${resetToken}`;
-
     try {
-      await sendResetEmail({
+      await sendPasswordResetOtpEmail({
         to: user.email,
         firstname: user.firstname,
-        resetUrl,
+        otp,
+        expiresInMinutes: OTP_TTL_MINUTES,
       });
     } catch (emailErr) {
-      // Annuler le token si l'email échoue
-      user.resetPasswordToken   = undefined;
-      user.resetPasswordExpires = undefined;
+      clearPasswordResetOtp(user);
       await user.save({ validateBeforeSave: false });
       return res.status(500).json({ error: 'Erreur lors de l\'envoi de l\'email. Réessayez.' });
     }
 
-    res.json({ message: 'Si ce compte existe, un email a été envoyé.' });
+    res.json({ message: 'Si ce compte existe, un code a été envoyé.' });
   } catch (err) { next(err); }
 });
 
@@ -180,27 +347,39 @@ router.post('/forgot-password', async (req, res, next) => {
 // ══════════════════════════════════════
 router.post('/reset-password', async (req, res, next) => {
   try {
-    const { token, password } = req.body;
-    if (!token || !password) {
-      return res.status(400).json({ error: 'Token et nouveau mot de passe requis.' });
+    const { email, otp, password } = req.body;
+    const cleanEmail = normalizeEmail(email);
+    const cleanOtp = String(otp || '').trim();
+
+    if (!cleanEmail || !cleanOtp || !password) {
+      return res.status(400).json({ error: 'E-mail, code OTP et nouveau mot de passe requis.' });
     }
     if (password.length < 6) {
       return res.status(400).json({ error: 'Mot de passe trop court (6 caractères minimum).' });
     }
 
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-    const user = await User.findOne({
-      resetPasswordToken:   hashedToken,
-      resetPasswordExpires: { $gt: Date.now() },
-    }).select('+resetPasswordToken +resetPasswordExpires');
+    const user = await User.findOne({ email: cleanEmail }).select('+passwordResetOtpHash +passwordResetOtpExpiresAt');
 
     if (!user) {
-      return res.status(400).json({ error: 'Lien invalide ou expiré. Faites une nouvelle demande.' });
+      return res.status(400).json({ error: 'Code invalide ou expiré. Faites une nouvelle demande.' });
+    }
+
+    if (isOtpExpired(user.passwordResetOtpExpiresAt)) {
+      return res.status(400).json({ error: 'Code expiré. Faites une nouvelle demande.' });
+    }
+
+    const expectedHash = hashOtp({
+      purpose: 'reset-password',
+      email: user.email,
+      otp: cleanOtp,
+    });
+
+    if (user.passwordResetOtpHash !== expectedHash) {
+      return res.status(400).json({ error: 'Code OTP invalide.' });
     }
 
     user.password             = password;
-    user.resetPasswordToken   = undefined;
-    user.resetPasswordExpires = undefined;
+    clearPasswordResetOtp(user);
     await user.save();
 
     const newToken = signToken(user._id);
