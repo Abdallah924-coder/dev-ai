@@ -1,0 +1,13 @@
+<svg width="64" height="64" viewBox="0 0 42 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="21" cy="21" r="21" fill="url(#devai-gradient)"/>
+  <path d="M12 21H22C24.7614 21 27 18.7614 27 16C27 13.2386 24.7614 11 22 11H12" stroke="#0B0B0D" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M12 31H26C28.7614 31 31 28.7614 31 26C31 23.2386 28.7614 21 26 21H12" stroke="#0B0B0D" stroke-width="2.4" stroke-linecap="round"/>
+  <circle cx="11" cy="11" r="2.4" fill="#0B0B0D"/>
+  <circle cx="11" cy="21" r="2.4" fill="#0B0B0D"/>
+  <defs>
+    <linearGradient id="devai-gradient" x1="6" y1="6" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD54A"/>
+      <stop offset="1" stop-color="#FF9B1A"/>
+    </linearGradient>
+  </defs>
+</svg>

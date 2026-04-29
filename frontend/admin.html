@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin DevAI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260426" />
+  <link rel="stylesheet" href="style.css?v=20260429" />
+</head>
+<body>
+  <main class="portal-page">
+    <section class="portal-hero">
+      <a class="portal-back" href="app.html">← Retour</a>
+      <h1>Administration DevAI</h1>
+      <p>Validez les paiements et débloquez les plans utilisateurs.</p>
+    </section>
+
+    <section class="portal-card" id="admin-login-card">
+      <h2>Connexion admin</h2>
+      <form id="admin-login-form" class="stack-form">
+        <div class="field-group">
+          <label>Mot de passe admin</label>
+          <input type="password" id="admin-password" required />
+        </div>
+        <div class="auth-error" id="admin-error"></div>
+        <button class="btn-primary" type="submit" id="admin-login-btn">Se connecter</button>
+      </form>
+    </section>
+
+    <section class="admin-shell hidden" id="admin-shell">
+      <section class="portal-grid">
+        <article class="portal-card">
+          <h2>En attente</h2>
+          <strong class="portal-stat" id="admin-pending-count">0</strong>
+        </article>
+        <article class="portal-card">
+          <h2>Approuvées</h2>
+          <strong class="portal-stat" id="admin-approved-count">0</strong>
+        </article>
+        <article class="portal-card">
+          <h2>Utilisateurs</h2>
+          <strong class="portal-stat" id="admin-users-count">0</strong>
+        </article>
+      </section>
+
+      <section class="portal-card">
+        <div class="usage-title-row">
+          <h2>Demandes de paiement</h2>
+          <button class="usage-link-btn" type="button" id="admin-refresh-btn">Actualiser</button>
+        </div>
+        <div id="admin-requests-list" class="portal-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <script src="admin.js?v=20260429"></script>
+</body>
+</html>

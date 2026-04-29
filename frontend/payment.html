@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paiement DevAI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260426" />
+  <link rel="stylesheet" href="style.css?v=20260429" />
+</head>
+<body>
+  <main class="portal-page">
+    <section class="portal-hero">
+      <a class="portal-back" href="app.html">← Retour à DevAI</a>
+      <h1>Débloquer plus de messages</h1>
+      <p>Envoyez votre paiement par MTN Mobile Money, puis soumettez votre preuve pour validation manuelle.</p>
+    </section>
+
+    <section class="portal-grid">
+      <article class="portal-card">
+        <h2>Destinataire</h2>
+        <div class="portal-kv">
+          <span>Numéro</span>
+          <strong id="payee-phone">+242 06 668 94 48</strong>
+        </div>
+        <div class="portal-kv">
+          <span>Nom</span>
+          <strong id="payee-name">MICHY MAGELLAN DEVOUE LI-MBOUITY</strong>
+        </div>
+        <p class="portal-note">Effectuez le transfert puis remplissez le formulaire avec la preuve de paiement.</p>
+      </article>
+
+      <article class="portal-card">
+        <h2>État du compte</h2>
+        <div class="portal-kv">
+          <span>Gratuits restants</span>
+          <strong id="payment-free">0</strong>
+        </div>
+        <div class="portal-kv">
+          <span>Crédits payants</span>
+          <strong id="payment-paid">0</strong>
+        </div>
+        <div class="portal-kv">
+          <span>Réinitialisation</span>
+          <strong id="payment-reset">-</strong>
+        </div>
+      </article>
+    </section>
+
+    <section class="portal-card">
+      <h2>Choisir un plan</h2>
+      <div class="plan-grid" id="plan-grid"></div>
+    </section>
+
+    <section class="portal-card">
+      <h2>Envoyer une preuve</h2>
+      <form id="payment-form" class="stack-form">
+        <input type="hidden" id="selected-plan-code" />
+        <div class="field-row">
+          <div class="field-group">
+            <label>Nom du payeur</label>
+            <input type="text" id="payer-name" required />
+          </div>
+          <div class="field-group">
+            <label>Téléphone utilisé</label>
+            <input type="text" id="payer-phone" required />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label>Référence de paiement</label>
+            <input type="text" id="payment-reference" placeholder="Optionnel" />
+          </div>
+          <div class="field-group">
+            <label>Preuve de paiement</label>
+            <input type="file" id="payment-proof" accept="image/png,image/jpeg,image/webp" required />
+          </div>
+        </div>
+        <div class="field-group">
+          <label>Note</label>
+          <textarea id="payment-note" rows="4" placeholder="Informations utiles pour la validation"></textarea>
+        </div>
+        <div class="portal-proof-preview hidden" id="proof-preview-wrap">
+          <img id="proof-preview" alt="Aperçu de la preuve de paiement" />
+        </div>
+        <div class="auth-error" id="payment-error"></div>
+        <div class="auth-success" id="payment-success"></div>
+        <button class="btn-primary" type="submit" id="payment-submit-btn">Soumettre la demande</button>
+      </form>
+    </section>
+
+    <section class="portal-card">
+      <h2>Demandes récentes</h2>
+      <div id="payment-requests-list" class="portal-list"></div>
+    </section>
+  </main>
+
+  <script src="payment.js?v=20260429"></script>
+</body>
+</html>
