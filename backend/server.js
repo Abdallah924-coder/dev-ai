@@ -21,6 +21,10 @@ const app  = express();
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
+// Render met l'app derrière un proxy inverse.
+// Sans ça, express-rate-limit voit X-Forwarded-For comme suspect.
+app.set('trust proxy', 1);
+
 // ── Sécurité ──
 app.use(helmet());
 
