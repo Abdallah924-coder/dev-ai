@@ -1355,6 +1355,16 @@ function renderMarkdownTable(lines) {
   return `<div class="table-wrap"><table>${headHtml}${bodyHtml}</table></div>`;
 }
 
+function appendMarkdownTableContinuation(row, text) {
+  const trimmedRow = String(row || '').trimEnd();
+  const continuation = String(text || '').trim();
+  if (!trimmedRow || !continuation) return trimmedRow;
+  if (trimmedRow.endsWith('|')) {
+    return `${trimmedRow.slice(0, -1)} <br> ${continuation} |`;
+  }
+  return `${trimmedRow} <br> ${continuation}`;
+}
+
 function splitMarkdownBlocks(source) {
   const lines = String(source || '').split('\n');
   const blocks = [];
@@ -1388,9 +1398,17 @@ function splitMarkdownBlocks(source) {
       while (index < lines.length) {
         const row = lines[index];
         const rowTrimmed = row.trim();
-        if (!rowTrimmed || !row.includes('|')) {
+        if (!rowTrimmed) {
           index -= 1;
           break;
+        }
+        if (!row.includes('|')) {
+          tableLines[tableLines.length - 1] = appendMarkdownTableContinuation(
+            tableLines[tableLines.length - 1],
+            rowTrimmed,
+          );
+          index += 1;
+          continue;
         }
         tableLines.push(row);
         index += 1;

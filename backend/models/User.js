@@ -52,6 +52,11 @@ const userSchema = new mongoose.Schema({
     minlength: [6, 'Mot de passe trop court (6 caractères minimum).'],
     select: false, // Jamais renvoyé dans les requêtes par défaut
   },
+  passwordHistory: {
+    type: [String],
+    select: false,
+    default: [],
+  },
   usage: {
     freeMessagesPerWindow: { type: Number, default: 20, min: 0 },
     freeWindowHours: { type: Number, default: 5, min: 1 },
@@ -73,6 +78,7 @@ const userSchema = new mongoose.Schema({
   toJSON: {
     transform(_, ret) {
       delete ret.password;
+      delete ret.passwordHistory;
       delete ret.emailVerificationOtpHash;
       delete ret.emailVerificationOtpExpiresAt;
       delete ret.passwordResetOtpHash;

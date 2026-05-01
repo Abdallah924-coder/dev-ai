@@ -200,7 +200,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, otp, password: pw }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Erreur serveur.');
 
       if (data.token) localStorage.setItem('devai_token', data.token);

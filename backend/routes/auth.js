@@ -1,6 +1,7 @@
 // routes/auth.js
 
 const express  = require('express');
+const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
 const User     = require('../models/User');
@@ -112,6 +113,27 @@ function clearPasswordResetOtp(user) {
 
 function isOtpExpired(expiresAt) {
   return !expiresAt || new Date(expiresAt).getTime() <= Date.now();
+}
+
+async function hasUserUsedPassword(user, candidatePassword) {
+  const hashes = [
+    user.password,
+    ...(Array.isArray(user.passwordHistory) ? user.passwordHistory : []),
+  ].filter(Boolean);
+
+  for (const hash of hashes) {
+    if (await bcrypt.compare(candidatePassword, hash)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function rememberCurrentPassword(user) {
+  const history = new Set(Array.isArray(user.passwordHistory) ? user.passwordHistory.filter(Boolean) : []);
+  if (user.password) history.add(user.password);
+  user.passwordHistory = Array.from(history);
 }
 
 // ══════════════════════════════════════
@@ -358,7 +380,7 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Mot de passe trop court (6 caractères minimum).' });
     }
 
-    const user = await User.findOne({ email: cleanEmail }).select('+passwordResetOtpHash +passwordResetOtpExpiresAt');
+    const user = await User.findOne({ email: cleanEmail }).select('+password +passwordHistory +passwordResetOtpHash +passwordResetOtpExpiresAt');
 
     if (!user) {
       return res.status(400).json({ error: 'Code invalide ou expiré. Faites une nouvelle demande.' });
@@ -378,6 +400,11 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Code OTP invalide.' });
     }
 
+    if (await hasUserUsedPassword(user, password)) {
+      return res.status(400).json({ error: 'Vous ne pouvez pas réutiliser un ancien mot de passe.' });
+    }
+
+    rememberCurrentPassword(user);
     user.password             = password;
     clearPasswordResetOtp(user);
     await user.save();
@@ -440,7 +467,7 @@ router.put('/onboarding', authMW, async (req, res, next) => {
 router.put('/profile', authMW, async (req, res, next) => {
   try {
     const { firstname, lastname, preferredName, birthDate, email, password } = req.body;
-    const user = await User.findById(req.user._id).select('+password');
+    const user = await User.findById(req.user._id).select('+password +passwordHistory');
 
     if (firstname) user.firstname = firstname.trim();
     if (lastname)  user.lastname  = lastname.trim();
@@ -469,6 +496,10 @@ router.put('/profile', authMW, async (req, res, next) => {
 
     if (password) {
       if (password.length < 6) return res.status(400).json({ error: 'Mot de passe trop court.' });
+      if (await hasUserUsedPassword(user, password)) {
+        return res.status(400).json({ error: 'Vous ne pouvez pas réutiliser un ancien mot de passe.' });
+      }
+      rememberCurrentPassword(user);
       user.password = password;
     }
 
