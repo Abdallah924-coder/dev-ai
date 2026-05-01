@@ -949,18 +949,10 @@ function containsCodeFence(text) {
 function shouldCreateArtifact(text) {
   const value = String(text || '');
   return containsCodeFence(value)
-    || value.length >= ARTIFACT_MIN_LENGTH
-    || value.split('\n').length >= ARTIFACT_MIN_LINES;
-}
-
-function stripMarkdownForPreview(text) {
-  return String(text || '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-    .replace(/[*#>-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    && (
+      value.length >= ARTIFACT_MIN_LENGTH
+      || value.split('\n').length >= ARTIFACT_MIN_LINES
+    );
 }
 
 function buildArtifact(content) {
@@ -968,16 +960,12 @@ function buildArtifact(content) {
 
   const codeFenceMatches = [...String(content || '').matchAll(/```(\w+)?\n?([\s\S]*?)```/g)];
   const firstLanguage = (codeFenceMatches[0]?.[1] || '').toLowerCase();
-  const preview = stripMarkdownForPreview(content);
-  const summary = containsCodeFence(content)
-    ? 'Contenu long déplacé dans un artifact pour garder la conversation lisible.'
-    : `${preview.slice(0, 260)}${preview.length > 260 ? '…' : ''}`;
 
   return {
-    title: containsCodeFence(content) ? 'Artifact code' : 'Artifact texte',
-    kind: containsCodeFence(content) ? 'code' : 'text',
+    title: 'Artifact code',
+    kind: 'code',
     language: firstLanguage || null,
-    summary,
+    summary: 'Code long déplacé dans un artifact pour garder la conversation lisible.',
   };
 }
 
@@ -1050,7 +1038,9 @@ function formatInlineMarkdown(text) {
     })
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>');
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
+    .replace(/\\n/g, '<br>');
 }
 
 function parseMarkdown(text) {
@@ -1064,11 +1054,15 @@ function parseMarkdown(text) {
     return token;
   });
 
-  const blocks = escaped.split(/\n{2,}/).map(block => block.trim()).filter(Boolean);
+  const blocks = splitMarkdownBlocks(escaped);
   const html = blocks.map((block) => {
     if (/^__CODE_BLOCK_\d+__$/.test(block)) return block;
 
     const lines = block.split('\n');
+    if (isMarkdownTable(lines)) {
+      return renderMarkdownTable(lines);
+    }
+
     if (lines.every(line => /^\s*[-*] /.test(line))) {
       const items = lines
         .map(line => `<li>${formatInlineMarkdown(line.replace(/^\s*[-*] /, ''))}</li>`)
@@ -1091,6 +1085,132 @@ function parseMarkdown(text) {
   }).join('');
 
   return html.replace(/__CODE_BLOCK_(\d+)__/g, (_, index) => codeBlocks[Number(index)] || '');
+}
+
+function isMarkdownTable(lines) {
+  if (lines.length < 2) return false;
+  if (!lines[0].includes('|') || !lines[1].includes('|')) return false;
+
+  const separatorCells = splitMarkdownTableRow(lines[1]);
+  if (!separatorCells.length) return false;
+
+  return separatorCells.every(cell => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitMarkdownTableRow(line) {
+  const raw = String(line || '').trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells = [];
+  let current = '';
+  let escaped = false;
+  let inCode = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '`') {
+      inCode = !inCode;
+      current += char;
+      continue;
+    }
+
+    if (char === '|' && !inCode) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function renderMarkdownTable(lines) {
+  const header = splitMarkdownTableRow(lines[0]);
+  const align = splitMarkdownTableRow(lines[1]).map((cell) => {
+    const trimmed = cell.trim();
+    if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
+    if (trimmed.endsWith(':')) return 'right';
+    return 'left';
+  });
+  const bodyRows = lines.slice(2).map(splitMarkdownTableRow).filter(row => row.length);
+
+  const headHtml = `<thead><tr>${header.map((cell, index) => `<th class="align-${align[index] || 'left'}">${formatInlineMarkdown(cell)}</th>`).join('')}</tr></thead>`;
+  const bodyHtml = bodyRows.length
+    ? `<tbody>${bodyRows.map(row => `<tr>${header.map((_, index) => `<td class="align-${align[index] || 'left'}">${formatInlineMarkdown(row[index] || '')}</td>`).join('')}</tr>`).join('')}</tbody>`
+    : '';
+
+  return `<div class="table-wrap"><table>${headHtml}${bodyHtml}</table></div>`;
+}
+
+function splitMarkdownBlocks(source) {
+  const lines = String(source || '').split('\n');
+  const blocks = [];
+  let buffer = [];
+
+  const flush = () => {
+    const block = buffer.join('\n').trim();
+    if (block) blocks.push(block);
+    buffer = [];
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (/^__CODE_BLOCK_\d+__$/.test(trimmed)) {
+      flush();
+      blocks.push(trimmed);
+      continue;
+    }
+
+    if (!trimmed) {
+      flush();
+      continue;
+    }
+
+    if (looksLikeMarkdownTableStart(lines, index)) {
+      flush();
+      const tableLines = [line, lines[index + 1]];
+      index += 2;
+      while (index < lines.length) {
+        const row = lines[index];
+        const rowTrimmed = row.trim();
+        if (!rowTrimmed || !row.includes('|')) {
+          index -= 1;
+          break;
+        }
+        tableLines.push(row);
+        index += 1;
+      }
+      blocks.push(tableLines.join('\n').trim());
+      continue;
+    }
+
+    buffer.push(line);
+  }
+
+  flush();
+  return blocks;
+}
+
+function looksLikeMarkdownTableStart(lines, index) {
+  const first = String(lines[index] || '').trim();
+  const second = String(lines[index + 1] || '').trim();
+  if (!first.includes('|') || !second.includes('|')) return false;
+  return isMarkdownTable([first, second]);
 }
 
 function createStreamingMessage() {

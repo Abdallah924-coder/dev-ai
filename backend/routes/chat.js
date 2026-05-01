@@ -12,6 +12,7 @@ const {
 } = require('../services/memoryService');
 const {
   inferIntent,
+  shouldUseWebResearch,
   resolveMode,
   buildResearchPlan,
   buildSystemPrompt,
@@ -131,7 +132,7 @@ router.post('/', chatLimiter, async (req, res, next) => {
     } catch (memoryError) {
       console.error('[DevAI] Memory update error:', memoryError.message);
     }
-    const shouldRunWebResearch = resolvedMode === 'deep_research';
+    const shouldRunWebResearch = shouldUseWebResearch(trimmedMessage, resolvedMode);
     const webResearch = shouldRunWebResearch
       ? await performWebResearch({ query: trimmedMessage, mode: resolvedMode, intent })
       : { performed: false, results: [], error: null };

@@ -12,6 +12,11 @@ Règles de comportement :
 - sois précise, pédagogique, structurée et orientée solution ;
 - en programmation, privilégie les explications fiables, le code correct et les étapes actionnables ;
 - en mathématiques, explicite les hypothèses, les formules et le raisonnement ;
+- quand une information comparative ou récapitulative s'y prête, utilise un vrai tableau Markdown lisible au lieu d'une fausse liste avec des caractères \`|\` ;
+- pour les mathématiques, utilise si utile des tableaux de signe, tableaux de variation, tableaux de cas ou tableaux récapitulatifs en Markdown ;
+- si une cellule de tableau a besoin de plusieurs éléments, utilise <br> dans la cellule plutôt qu'un tableau cassé ;
+- n'utilise un bloc de code que pour du vrai code, une formule structurée, ou une sortie technique qui en a besoin ;
+- si l'utilisateur demande une recherche web, des sources ou des liens, appuie-toi sur les sources disponibles et fournis des liens Markdown cliquables ;
 - si tu n'es pas certaine d'un point, signale l'incertitude au lieu d'inventer ;
 - n'évoque jamais un fournisseur tiers ou un modèle spécifique ;
 - tu représentes WORLDIFYAI.`;
@@ -30,6 +35,20 @@ function inferIntent(message) {
   if (/(math|maths|équation|algèbre|intégrale|dérivée|matrice|probabilité)/.test(text)) return 'math';
   if (/(explique|pourquoi|comment)/.test(text)) return 'explanation';
   return 'general';
+}
+
+function shouldUseWebResearch(message, mode) {
+  if (mode === 'deep_research') return true;
+
+  const text = String(message || '').toLowerCase();
+  const explicitResearchPatterns = [
+    /(cherche|recherche|trouve|look up|search).*(web|internet|en ligne|source|sources|lien|liens|url)/,
+    /(donne|fournis|ajoute|inclue|montre).*(source|sources|lien|liens|url)/,
+    /(récent|récente|récentes|actualité|actualités|latest|today|aujourd'hui)/,
+    /(sur le web|sur internet|en ligne)/,
+  ];
+
+  return explicitResearchPatterns.some((pattern) => pattern.test(text));
 }
 
 function resolveMode(requestedMode, intent) {
@@ -65,6 +84,7 @@ Travaille en profondeur.
   if (mode === 'code') {
     return `Mode actif: Code.
 - priorise exactitude technique, lisibilité, étapes de débogage et exemples exécutables ;
+- si tu compares des options, APIs, étapes ou diagnostics, préfère un tableau Markdown propre ;
 - si utile, propose une structure de fichiers, des commandes et des tests.`;
   }
 
@@ -72,6 +92,7 @@ Travaille en profondeur.
     return `Mode actif: Math.
 - montre les étapes de résolution ;
 - vérifie les hypothèses ;
+- si cela clarifie la réponse, utilise un tableau Markdown pour les signes, variations, intervalles ou cas ;
 - distingue clairement intuition, formule et conclusion.`;
   }
 
@@ -141,6 +162,7 @@ function buildSystemPrompt({ memory, conversation, mode, intent, webResearch }) 
     sections.push(`Consignes pour l'usage des sources:
 - appuie-toi d'abord sur les résultats ci-dessus ;
 - cite les sources par leur titre ou leur domaine quand c'est utile ;
+- si l'utilisateur demande explicitement des liens ou des sources, inclus une liste de liens Markdown cliquables ;
 - si les sources sont insuffisantes ou contradictoires, dis-le clairement.`);
   }
 
@@ -179,6 +201,7 @@ function getRequestConfig(mode) {
 
 module.exports = {
   inferIntent,
+  shouldUseWebResearch,
   resolveMode,
   buildResearchPlan,
   buildSystemPrompt,

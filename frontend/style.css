@@ -921,6 +921,47 @@ body {
 .msg-text a,
 .artifact-body a { color: var(--accent); text-decoration: underline; }
 
+.msg-text table,
+.artifact-body table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+}
+
+.msg-text th,
+.msg-text td,
+.artifact-body th,
+.artifact-body td {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.msg-text th,
+.artifact-body th {
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.msg-text td,
+.artifact-body td {
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.02);
+}
+
+.align-left { text-align: left; }
+.align-center { text-align: center; }
+.align-right { text-align: right; }
+
 .artifact-preview {
   padding: 14px 16px;
   border: 1px solid rgba(193,125,60,0.2);
