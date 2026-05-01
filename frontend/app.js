@@ -15,11 +15,14 @@ const MESSAGE_MAX_LENGTH = 1500;
 const ARTIFACT_MIN_LENGTH = 700;
 const ARTIFACT_MIN_LINES = 18;
 const MAX_CHAT_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
+const NOTIFICATION_STORAGE_KEY = 'devai_notifications_enabled';
+const APP_VERSION = '20260502';
 
 const messageStore = new Map();
 let messageStoreCounter = 0;
 let activeArtifactId = null;
 let pendingChatImage = null;
+let serviceWorkerRegistration = null;
 
 function resolveApiUrl() {
   if (window.DEVAI_API_URL) return stripTrailingSlash(window.DEVAI_API_URL);
@@ -373,11 +376,126 @@ async function setupServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
 
   try {
-    const registration = await navigator.serviceWorker.register('/sw.js?v=20260501');
+    const registration = await navigator.serviceWorker.register(`/sw.js?v=${APP_VERSION}`);
+    serviceWorkerRegistration = registration;
     registration.update().catch(() => {});
   } catch (error) {
     console.warn('Service worker indisponible:', error.message);
   }
+}
+
+function areReplyNotificationsEnabled() {
+  const stored = localStorage.getItem(NOTIFICATION_STORAGE_KEY);
+  return stored !== 'off';
+}
+
+function disableReplyNotifications() {
+  localStorage.setItem(NOTIFICATION_STORAGE_KEY, 'off');
+}
+
+function isChatInBackground() {
+  return document.hidden || !document.hasFocus();
+}
+
+async function ensureReplyNotificationPermission() {
+  if (!areReplyNotificationsEnabled()) return false;
+  if (!('Notification' in window) || !serviceWorkerRegistration) return false;
+
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') {
+    disableReplyNotifications();
+    return false;
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === 'denied') {
+      disableReplyNotifications();
+      return false;
+    }
+    if (permission !== 'granted') {
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn('Permission notification refusée:', error.message);
+    return false;
+  }
+}
+
+function summarizeNotificationReply(reply) {
+  const compact = String(reply || '')
+    .replace(/```[\s\S]*?```/g, 'Code disponible dans le chat.')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!compact) return 'La reponse est prete dans DevAI.';
+  if (compact.length <= 140) return compact;
+  return `${compact.slice(0, 137)}…`;
+}
+
+function buildReplyNotificationPayload({ conversationId, title, question, reply }) {
+  return {
+    type: 'SHOW_CHAT_REPLY_NOTIFICATION',
+    payload: {
+      title: title || 'Reponse DevAI prete',
+      body: summarizeNotificationReply(reply),
+      conversationId,
+      url: conversationId ? `/app?conversation=${encodeURIComponent(conversationId)}` : '/app',
+      question: String(question || '').slice(0, 180),
+      icon: '/favicon.svg?v=20260426',
+      badge: '/favicon.svg?v=20260426',
+      tag: `devai-reply-${conversationId || 'latest'}`,
+    },
+  };
+}
+
+async function notifyReplyIfNeeded({ conversationId, title, question, reply }) {
+  if (!isChatInBackground()) return;
+  const hasPermission = await ensureReplyNotificationPermission();
+  if (!hasPermission) return;
+
+  const message = buildReplyNotificationPayload({ conversationId, title, question, reply });
+  const activeWorker = serviceWorkerRegistration?.active || serviceWorkerRegistration?.waiting || serviceWorkerRegistration?.installing;
+
+  if (activeWorker) {
+    activeWorker.postMessage(message);
+    return;
+  }
+
+  await serviceWorkerRegistration.showNotification(message.payload.title, {
+    body: message.payload.body,
+    icon: message.payload.icon,
+    badge: message.payload.badge,
+    tag: message.payload.tag,
+    renotify: true,
+    requireInteraction: false,
+    data: {
+      conversationId: message.payload.conversationId,
+      url: message.payload.url,
+      question: message.payload.question,
+    },
+  });
+}
+
+function handleNotificationNavigation(conversationId) {
+  if (!conversationId) return;
+
+  const currentUrl = new URL(window.location.href);
+  currentUrl.searchParams.set('conversation', conversationId);
+  window.history.replaceState({}, '', currentUrl.toString());
+
+  if (state.activeConvId === conversationId) return;
+  switchConv(conversationId).catch((error) => {
+    console.warn('Impossible d’ouvrir la conversation depuis la notification:', error.message);
+  });
+}
+
+function syncConversationFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const conversationId = params.get('conversation');
+  if (!conversationId) return null;
+  return conversationId;
 }
 
 // ──────────────────────────────────────
@@ -388,6 +506,15 @@ async function loadConversations() {
     const data = await api('GET', '/conversations');
     state.conversations = data.conversations || [];
     renderConvList();
+    const requestedConversationId = syncConversationFromUrl();
+
+    if (requestedConversationId) {
+      const match = state.conversations.find((conversation) => conversation._id === requestedConversationId);
+      if (match) {
+        await switchConv(match._id);
+        return;
+      }
+    }
 
     if (state.conversations.length > 0) {
       const first = state.conversations.find(c => !c.hidden);
@@ -609,6 +736,7 @@ async function sendMessage() {
   const streamMessage = createStreamingMessage();
 
   try {
+    ensureReplyNotificationPermission().catch(() => {});
     const response = await fetch(`${API_URL}/chat`, {
       method: 'POST',
       headers: {
@@ -645,6 +773,7 @@ async function sendMessage() {
 
     // Mettre à jour le titre si généré automatiquement
     const conv = state.conversations.find(c => c._id === state.activeConvId);
+    let resolvedTitle = data.title || 'Reponse DevAI prete';
     if (conv) {
       conv.messages = conv.messages || [];
       conv.messages.push(
@@ -659,8 +788,16 @@ async function sendMessage() {
         conv.title = data.title;
         $('chat-title').textContent = data.title;
       }
+      resolvedTitle = conv.title || resolvedTitle;
       renderConvList();
     }
+
+    await notifyReplyIfNeeded({
+      conversationId: state.activeConvId,
+      title: resolvedTitle,
+      question: normalizedText || attachment?.originalName || '',
+      reply: data.reply,
+    });
   } catch (e) {
     removeStreamingMessage(streamMessage);
     if (e.payload?.usage) applyUsageData(e.payload.usage);
@@ -690,7 +827,14 @@ function setLoading(v) {
 }
 
 function openChatImagePicker() {
-  $('chat-image-input')?.click();
+  const input = $('chat-image-input');
+  if (!input || input.disabled) return;
+  input.value = '';
+  if (typeof input.showPicker === 'function') {
+    input.showPicker();
+    return;
+  }
+  input.click();
 }
 
 function handleChatImageSelect(event) {
@@ -1712,10 +1856,11 @@ function downloadArtifact() {
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
+  link.rel = 'noopener';
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 function scrollMessagesToBottom() {
@@ -1772,6 +1917,12 @@ document.addEventListener('input', (e) => {
   }
   if (e.target?.id === 'chat-input') {
     updateComposerMeta();
+  }
+});
+
+navigator.serviceWorker?.addEventListener('message', (event) => {
+  if (event.data?.type === 'OPEN_CONVERSATION_FROM_NOTIFICATION') {
+    handleNotificationNavigation(event.data.conversationId);
   }
 });
 

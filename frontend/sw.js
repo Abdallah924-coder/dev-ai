@@ -1,4 +1,4 @@
-const CACHE_NAME = 'devai-static-v20260501';
+const CACHE_NAME = 'devai-static-v20260502';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -21,7 +21,7 @@ const APP_SHELL = [
   '/landing.css?v=20260426',
   '/landing.js?v=20260426',
   '/style.css?v=20260501',
-  '/app.js?v=20260501',
+  '/app.js?v=20260502',
   '/payment.js?v=20260429',
   '/admin.js?v=20260429',
   '/devai-mark.svg?v=20260426',
@@ -75,4 +75,53 @@ self.addEventListener('fetch', (event) => {
       });
     })
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'SHOW_CHAT_REPLY_NOTIFICATION') return;
+
+  const payload = event.data.payload || {};
+  const title = String(payload.title || 'Reponse DevAI prete');
+  const body = String(payload.body || 'Votre reponse est disponible dans DevAI.');
+
+  event.waitUntil(self.registration.showNotification(title, {
+    body,
+    icon: payload.icon || '/favicon.svg?v=20260426',
+    badge: payload.badge || '/favicon.svg?v=20260426',
+    tag: payload.tag || 'devai-reply',
+    renotify: true,
+    requireInteraction: false,
+    data: {
+      conversationId: payload.conversationId || '',
+      url: payload.url || '/app',
+      question: payload.question || '',
+    },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const notificationData = event.notification.data || {};
+  const targetUrl = notificationData.url || '/app';
+  const conversationId = notificationData.conversationId || '';
+
+  event.waitUntil((async () => {
+    const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windowClients) {
+      if (!client.url.startsWith(self.location.origin)) continue;
+
+      await client.focus();
+      if ('navigate' in client) {
+        await client.navigate(targetUrl);
+      }
+      client.postMessage({
+        type: 'OPEN_CONVERSATION_FROM_NOTIFICATION',
+        conversationId,
+      });
+      return;
+    }
+
+    await self.clients.openWindow(targetUrl);
+  })());
 });
