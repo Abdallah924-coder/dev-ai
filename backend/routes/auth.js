@@ -130,17 +130,37 @@ async function hasUserUsedPassword(user, candidatePassword) {
   return false;
 }
 
-function rememberCurrentPassword(user) {
+function buildPasswordHistory(user) {
   const history = new Set(Array.isArray(user.passwordHistory) ? user.passwordHistory.filter(Boolean) : []);
   if (user.password) history.add(user.password);
-  user.passwordHistory = Array.from(history);
+  return Array.from(history);
 }
 
-function applyNewPassword(user, plainPassword) {
-  rememberCurrentPassword(user);
-  user.set('password', plainPassword);
-  user.markModified('password');
-  user.markModified('passwordHistory');
+async function persistNewPassword(user, plainPassword, options = {}) {
+  const nextPasswordHash = await bcrypt.hash(plainPassword, 12);
+  const passwordHistory = buildPasswordHistory(user);
+  const update = {
+    password: nextPasswordHash,
+    passwordHistory,
+  };
+
+  if (options.clearResetOtp) {
+    update.passwordResetOtpHash = '';
+    update.passwordResetOtpExpiresAt = null;
+  }
+
+  await User.updateOne(
+    { _id: user._id },
+    { $set: update },
+    { runValidators: false },
+  );
+
+  user.password = nextPasswordHash;
+  user.passwordHistory = passwordHistory;
+  if (options.clearResetOtp) {
+    user.passwordResetOtpHash = '';
+    user.passwordResetOtpExpiresAt = null;
+  }
 }
 
 // ══════════════════════════════════════
@@ -411,9 +431,7 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Vous ne pouvez pas réutiliser un ancien mot de passe.' });
     }
 
-    applyNewPassword(user, password);
-    clearPasswordResetOtp(user);
-    await user.save();
+    await persistNewPassword(user, password, { clearResetOtp: true });
 
     const newToken = signToken(user._id);
     res.json({ message: 'Mot de passe réinitialisé avec succès.', token: newToken });
@@ -505,7 +523,7 @@ router.put('/profile', authMW, async (req, res, next) => {
       if (await hasUserUsedPassword(user, password)) {
         return res.status(400).json({ error: 'Vous ne pouvez pas réutiliser un ancien mot de passe.' });
       }
-      applyNewPassword(user, password);
+      await persistNewPassword(user, password);
     }
 
     await user.save();
