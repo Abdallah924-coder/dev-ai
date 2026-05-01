@@ -1,4 +1,4 @@
-const CACHE_NAME = 'devai-static-v20260502';
+const CACHE_NAME = 'devai-static-v20260503';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -11,17 +11,14 @@ const APP_SHELL = [
   '/admin',
   '/admin/',
   '/admin/index.html',
-  '/reset-password',
-  '/reset-password/',
-  '/reset-password/index.html',
   '/app.html',
   '/payment.html',
   '/admin.html',
   '/reset-password.html',
   '/landing.css?v=20260426',
-  '/landing.js?v=20260426',
+  '/landing.js?v=20260503',
   '/style.css?v=20260501',
-  '/app.js?v=20260502',
+  '/app.js?v=20260503',
   '/payment.js?v=20260429',
   '/admin.js?v=20260429',
   '/devai-mark.svg?v=20260426',
@@ -50,6 +47,11 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  if (url.pathname === '/reset-password' || url.pathname === '/reset-password/' || url.pathname === '/reset-password/index.html') {
+    event.respondWith(fetch(request));
+    return;
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(

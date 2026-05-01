@@ -47,7 +47,7 @@ async function setupServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
 
   try {
-    const registration = await navigator.serviceWorker.register('/sw.js?v=20260426');
+    const registration = await navigator.serviceWorker.register('/sw.js?v=20260503');
     registration.update().catch(() => {});
   } catch (error) {
     console.warn('Service worker indisponible:', error.message);

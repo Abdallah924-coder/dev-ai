@@ -16,7 +16,7 @@ const ARTIFACT_MIN_LENGTH = 700;
 const ARTIFACT_MIN_LINES = 18;
 const MAX_CHAT_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
 const NOTIFICATION_STORAGE_KEY = 'devai_notifications_enabled';
-const APP_VERSION = '20260502';
+const APP_VERSION = '20260503';
 
 const messageStore = new Map();
 let messageStoreCounter = 0;

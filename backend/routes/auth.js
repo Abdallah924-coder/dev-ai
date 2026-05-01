@@ -161,6 +161,15 @@ async function persistNewPassword(user, plainPassword, options = {}) {
     user.passwordResetOtpHash = '';
     user.passwordResetOtpExpiresAt = null;
   }
+
+  const persistedUser = await User.findById(user._id).select('+password +passwordHistory +passwordResetOtpHash +passwordResetOtpExpiresAt');
+  if (!persistedUser || !(await persistedUser.comparePassword(plainPassword))) {
+    const error = new Error('Le nouveau mot de passe n’a pas pu être enregistré.');
+    error.status = 500;
+    throw error;
+  }
+
+  return persistedUser;
 }
 
 // ══════════════════════════════════════
@@ -523,7 +532,9 @@ router.put('/profile', authMW, async (req, res, next) => {
       if (await hasUserUsedPassword(user, password)) {
         return res.status(400).json({ error: 'Vous ne pouvez pas réutiliser un ancien mot de passe.' });
       }
-      await persistNewPassword(user, password);
+      const persistedUser = await persistNewPassword(user, password);
+      user.password = persistedUser.password;
+      user.passwordHistory = persistedUser.passwordHistory;
     }
 
     await user.save();
