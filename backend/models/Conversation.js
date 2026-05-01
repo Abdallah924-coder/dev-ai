@@ -2,9 +2,17 @@
 
 const mongoose = require('mongoose');
 
+const attachmentSchema = new mongoose.Schema({
+  kind: { type: String, enum: ['image'], default: 'image' },
+  mimeType: { type: String, default: '', maxlength: 40 },
+  dataUrl: { type: String, default: '', maxlength: 3_200_000 },
+  originalName: { type: String, default: '', maxlength: 180 },
+}, { _id: false });
+
 const messageSchema = new mongoose.Schema({
   role:      { type: String, enum: ['user', 'ai'], required: true },
   content:   { type: String, required: true },
+  attachment:{ type: attachmentSchema, default: null },
   createdAt: { type: Date, default: Date.now },
 }, { _id: false });
 

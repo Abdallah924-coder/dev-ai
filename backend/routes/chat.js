@@ -9,6 +9,8 @@ const rateLimit    = require('express-rate-limit');
 const {
   updateMemoryFromMessage,
   getOrCreateUserMemory,
+  parseMemoryCommand,
+  applyMemoryCommand,
 } = require('../services/memoryService');
 const {
   inferIntent,
@@ -38,6 +40,35 @@ const chatLimiter = rateLimit({
   max: 30,               // 30 messages par minute max par IP
   message: { error: 'Trop de messages envoyés. Attendez un moment.' },
 });
+const MAX_CHAT_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
+
+function parseChatImageDataUrl(dataUrl, originalName = '') {
+  if (!dataUrl) return null;
+
+  const match = String(dataUrl || '').match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+  if (!match) {
+    const error = new Error("L'image doit être en PNG, JPG ou WEBP.");
+    error.status = 400;
+    throw error;
+  }
+
+  const mimeType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+  const base64 = match[2];
+  const buffer = Buffer.from(base64, 'base64');
+
+  if (!buffer.length || buffer.length > MAX_CHAT_IMAGE_SIZE_BYTES) {
+    const error = new Error("L'image dépasse la taille maximale autorisée (2 MB).");
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    kind: 'image',
+    mimeType,
+    dataUrl: String(dataUrl),
+    originalName: String(originalName || 'image').slice(0, 180),
+  };
+}
 
 function sendStreamEvent(res, event, payload) {
   res.write(`event: ${event}\n`);
@@ -82,14 +113,15 @@ function getApiKey() {
 // ══════════════════════════════════════
 router.post('/', chatLimiter, async (req, res, next) => {
   try {
-    const { conversationId, message, mode } = req.body;
+    const { conversationId, message, mode, imageDataUrl, imageOriginalName } = req.body;
 
-    if (!conversationId || !message?.trim()) {
-      return res.status(400).json({ error: 'conversationId et message sont requis.' });
+    if (!conversationId || (!message?.trim() && !imageDataUrl)) {
+      return res.status(400).json({ error: 'conversationId et un message ou une image sont requis.' });
     }
 
     enforceUserCanSendMessage(req.user);
-    const normalizedMessage = normalizeOutgoingMessage(message);
+    const normalizedMessage = normalizeOutgoingMessage(message || '[Image envoyée pour analyse]');
+    const imageAttachment = parseChatImageDataUrl(imageDataUrl, imageOriginalName);
 
     // Récupérer la conversation (vérifie que l'utilisateur en est le propriétaire)
     const conv = await Conversation.findOne({
@@ -105,7 +137,7 @@ router.post('/', chatLimiter, async (req, res, next) => {
     await req.user.save({ validateBeforeSave: false });
 
     // Ajouter le message utilisateur
-    conv.messages.push({ role: 'user', content: trimmedMessage });
+    conv.messages.push({ role: 'user', content: trimmedMessage, attachment: imageAttachment });
     conv.mode = resolvedMode;
     conv.lastIntent = intent;
     conv.lastResearchPlan = resolvedMode === 'deep_research'
@@ -122,6 +154,38 @@ router.post('/', chatLimiter, async (req, res, next) => {
     }
 
     await conv.save();
+
+    const memoryCommand = parseMemoryCommand(trimmedMessage);
+    if (memoryCommand) {
+      const { memory, reply } = await applyMemoryCommand({
+        userId: req.user._id,
+        command: memoryCommand,
+      });
+
+      conv.messages.push({ role: 'ai', content: reply });
+      conv.summary = buildConversationSummaryAfterReply(conv);
+      await conv.save();
+
+      return res.json({
+        reply,
+        conversationId: conv._id,
+        title: conv.title,
+        mode: conv.mode,
+        intent: 'memory_control',
+        researchPlan: [],
+        webResearch: {
+          performed: false,
+          provider: null,
+          error: null,
+          sources: [],
+        },
+        usage: billingResult.usage,
+        billingSource: billingResult.source,
+        messageWasTrimmed: normalizedMessage.wasTrimmed,
+        maxMessageLength: MESSAGE_MAX_LENGTH,
+        memory,
+      });
+    }
 
     let memory = await getOrCreateUserMemory(req.user._id);
     try {
@@ -291,6 +355,22 @@ router.get('/memory', async (req, res, next) => {
   try {
     const memory = await getOrCreateUserMemory(req.user._id);
     res.json({ memory, usage: buildUsageSnapshot(req.user) });
+  } catch (err) { next(err); }
+});
+
+router.post('/memory', async (req, res, next) => {
+  try {
+    const command = req.body || {};
+    if (!command.action) {
+      return res.status(400).json({ error: 'action requis.' });
+    }
+
+    const { memory, reply } = await applyMemoryCommand({
+      userId: req.user._id,
+      command,
+    });
+
+    res.json({ memory, reply, usage: buildUsageSnapshot(req.user) });
   } catch (err) { next(err); }
 });
 

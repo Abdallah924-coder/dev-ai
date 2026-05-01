@@ -170,10 +170,40 @@ function buildSystemPrompt({ memory, conversation, mode, intent, webResearch }) 
 }
 
 function buildApiMessages(conversation) {
-  return conversation.messages.slice(-16).map(message => ({
-    role: message.role === 'ai' ? 'assistant' : 'user',
-    content: message.content,
-  }));
+  return conversation.messages.slice(-16).map((message) => {
+    const role = message.role === 'ai' ? 'assistant' : 'user';
+    if (message.attachment?.kind === 'image' && message.attachment?.dataUrl && role === 'user') {
+      const match = String(message.attachment.dataUrl).match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+      if (match) {
+        const mediaType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+        const data = match[2];
+        const blocks = [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mediaType,
+              data,
+            },
+          },
+        ];
+
+        if (message.content?.trim()) {
+          blocks.push({
+            type: 'text',
+            text: message.content,
+          });
+        }
+
+        return { role, content: blocks };
+      }
+    }
+
+    return {
+      role,
+      content: message.content,
+    };
+  });
 }
 
 function buildConversationSummaryAfterReply(conversation) {

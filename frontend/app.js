@@ -14,10 +14,12 @@ const INSIGHTS_AUTO_HIDE_MS = 8000;
 const MESSAGE_MAX_LENGTH = 1500;
 const ARTIFACT_MIN_LENGTH = 700;
 const ARTIFACT_MIN_LINES = 18;
+const MAX_CHAT_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
 
 const messageStore = new Map();
 let messageStoreCounter = 0;
 let activeArtifactId = null;
+let pendingChatImage = null;
 
 function resolveApiUrl() {
   if (window.DEVAI_API_URL) return stripTrailingSlash(window.DEVAI_API_URL);
@@ -511,12 +513,13 @@ function renderMessages(conv) {
   conv.messages.forEach(m => appendMessage(m.role, m.content, {
     scroll: false,
     createdAt: m.createdAt,
+    attachment: m.attachment || null,
   }));
   container.scrollTop = container.scrollHeight;
 }
 
 function appendMessage(role, content, options = {}) {
-  const { scroll = true, createdAt = new Date().toISOString(), meta = null } = options;
+  const { scroll = true, createdAt = new Date().toISOString(), meta = null, attachment = null } = options;
   $('welcome-screen').style.display = 'none';
   const container = $('messages');
   container.style.display = 'flex';
@@ -545,6 +548,7 @@ function appendMessage(role, content, options = {}) {
           ${role === 'ai' ? buildAiActionButtons({ messageId, artifact: display.artifact }) : ''}
         </div>
       </div>
+      ${attachment?.kind === 'image' && attachment?.dataUrl ? `<div class="msg-attachment"><img src="${escapeAttr(attachment.dataUrl)}" alt="${escapeAttr(attachment.originalName || 'Image jointe')}" /></div>` : ''}
       <div class="msg-text">${display.html}</div>
       ${metaHtml}
     </div>`;
@@ -589,17 +593,19 @@ async function sendMessage() {
     return;
   }
   const text  = String(input.value || '').trim();
-  if (!text || !state.activeConvId) return;
+  if ((!text && !pendingChatImage) || !state.activeConvId) return;
 
   const normalizedText = text.length > MESSAGE_MAX_LENGTH
     ? `${text.slice(0, MESSAGE_MAX_LENGTH - 1)}…`
     : text;
+  const attachment = pendingChatImage;
 
   input.value = '';
   input.style.height = 'auto';
+  clearChatImage();
   updateComposerMeta();
   setLoading(true);
-  appendMessage('user', normalizedText);
+  appendMessage('user', normalizedText || '[Image envoyée pour analyse]', { attachment });
   const streamMessage = createStreamingMessage();
 
   try {
@@ -610,9 +616,11 @@ async function sendMessage() {
         ...(state.token ? { 'Authorization': `Bearer ${state.token}` } : {}),
       },
       body: JSON.stringify({
-      conversationId: state.activeConvId,
-      message: normalizedText,
-      mode: state.currentMode,
+        conversationId: state.activeConvId,
+        message: normalizedText || '[Image envoyée pour analyse]',
+        mode: state.currentMode,
+        imageDataUrl: attachment?.dataUrl || null,
+        imageOriginalName: attachment?.originalName || '',
       }),
     });
 
@@ -640,7 +648,7 @@ async function sendMessage() {
     if (conv) {
       conv.messages = conv.messages || [];
       conv.messages.push(
-        { role: 'user', content: normalizedText, createdAt: new Date().toISOString() },
+        { role: 'user', content: normalizedText || '[Image envoyée pour analyse]', attachment, createdAt: new Date().toISOString() },
         { role: 'ai', content: data.reply, createdAt: new Date().toISOString() },
       );
       conv.mode = data.mode || conv.mode;
@@ -678,6 +686,54 @@ function setLoading(v) {
   isLoading = v;
   $('send-btn').disabled = v;
   $('chat-input').disabled = v || Boolean(state.usage?.blocked);
+  $('chat-image-input').disabled = v || Boolean(state.usage?.blocked);
+}
+
+function openChatImagePicker() {
+  $('chat-image-input')?.click();
+}
+
+function handleChatImageSelect(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  if (!/^image\/(png|jpeg|jpg|webp)$/i.test(file.type)) {
+    appendMessage('ai', "⚠️ Format d'image non supporté. Utilise PNG, JPG ou WEBP.");
+    clearChatImage();
+    return;
+  }
+
+  if (file.size > MAX_CHAT_IMAGE_SIZE_BYTES) {
+    appendMessage('ai', "⚠️ L'image dépasse 2 MB.");
+    clearChatImage();
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    pendingChatImage = {
+      kind: 'image',
+      dataUrl: String(reader.result || ''),
+      originalName: file.name || 'image',
+      mimeType: file.type,
+    };
+    $('chat-image-preview').src = pendingChatImage.dataUrl;
+    $('chat-image-name').textContent = pendingChatImage.originalName;
+    $('chat-image-preview-wrap').classList.remove('hidden');
+  };
+  reader.onerror = () => {
+    appendMessage('ai', "⚠️ Impossible de lire l'image.");
+    clearChatImage();
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearChatImage() {
+  pendingChatImage = null;
+  $('chat-image-input').value = '';
+  $('chat-image-preview').removeAttribute('src');
+  $('chat-image-name').textContent = 'image';
+  $('chat-image-preview-wrap').classList.add('hidden');
 }
 
 // ──────────────────────────────────────
@@ -1430,6 +1486,7 @@ function formatIntentLabel(intent) {
     debug: 'Intention debug',
     explanation: 'Intention explication',
     general: 'Intention générale',
+    memory_control: 'Contrôle mémoire',
     incident: 'Réponse de secours',
   };
   return labels[intent] || 'Intention générale';
@@ -1569,6 +1626,8 @@ function openArtifactFromButton(button) {
   $('artifact-meta').textContent = button.dataset.artifactLanguage
     ? `${button.dataset.artifactKind || 'text'} • ${button.dataset.artifactLanguage}`
     : (button.dataset.artifactKind || 'text');
+  $('artifact-download-btn').dataset.artifactLanguage = button.dataset.artifactLanguage || '';
+  $('artifact-download-btn').dataset.artifactKind = button.dataset.artifactKind || 'text';
   $('artifact-body').innerHTML = parseMarkdown(content);
   $('artifact-modal').classList.remove('hidden');
   typesetMath($('artifact-body'));
@@ -1594,6 +1653,69 @@ async function copyArtifact() {
   } catch (error) {
     console.warn('Copie artifact impossible:', error.message);
   }
+}
+
+function buildArtifactFilename(language, kind = 'text') {
+  const normalized = String(language || '').trim().toLowerCase();
+  const extensionMap = {
+    javascript: 'js',
+    js: 'js',
+    typescript: 'ts',
+    ts: 'ts',
+    jsx: 'jsx',
+    tsx: 'tsx',
+    python: 'py',
+    py: 'py',
+    java: 'java',
+    c: 'c',
+    cpp: 'cpp',
+    'c++': 'cpp',
+    csharp: 'cs',
+    'c#': 'cs',
+    php: 'php',
+    ruby: 'rb',
+    go: 'go',
+    rust: 'rs',
+    swift: 'swift',
+    kotlin: 'kt',
+    html: 'html',
+    css: 'css',
+    scss: 'scss',
+    sass: 'sass',
+    json: 'json',
+    yaml: 'yml',
+    yml: 'yml',
+    xml: 'xml',
+    sql: 'sql',
+    shell: 'sh',
+    bash: 'sh',
+    sh: 'sh',
+    markdown: 'md',
+    md: 'md',
+    text: 'txt',
+  };
+
+  const extension = extensionMap[normalized] || (kind === 'code' ? 'txt' : 'txt');
+  return `artifact-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
+}
+
+function downloadArtifact() {
+  const text = readStoredMessage(activeArtifactId);
+  if (!text) return;
+
+  const button = $('artifact-download-btn');
+  const language = button?.dataset?.artifactLanguage || '';
+  const kind = button?.dataset?.artifactKind || 'text';
+  const filename = buildArtifactFilename(language, kind);
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function scrollMessagesToBottom() {

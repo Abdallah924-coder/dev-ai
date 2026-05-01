@@ -877,6 +877,19 @@ body {
   color: var(--text);
   word-break: break-word;
 }
+
+.msg-attachment {
+  margin-bottom: 12px;
+}
+
+.msg-attachment img {
+  display: block;
+  max-width: min(100%, 360px);
+  max-height: 280px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+}
 .msg-text p,
 .artifact-body p { margin-bottom: 12px; }
 .msg-text p:last-child,
@@ -1092,6 +1105,44 @@ body {
   transition: border-color 0.2s;
   max-width: 860px;
   margin: 0 auto;
+}
+
+.composer-attach-btn {
+  flex-shrink: 0;
+}
+
+.composer-attachment-preview {
+  max-width: 860px;
+  margin: 10px auto 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.composer-attachment-preview img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.composer-attachment-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.composer-attachment-meta strong {
+  color: var(--text);
+  font-size: 13px;
+  word-break: break-word;
 }
 .input-box:focus-within { border-color: var(--accent); }
 
