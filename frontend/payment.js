@@ -7,7 +7,7 @@ let plans = [];
 let proofDataUrl = '';
 
 if (!token) {
-  window.location.href = 'app.html';
+  window.location.href = '/app';
 }
 
 function resolveApiUrl() {

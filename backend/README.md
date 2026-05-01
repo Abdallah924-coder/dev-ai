@@ -46,7 +46,7 @@ devAI/
   - `3$ / mois -> 500 messages`
   - `5$ / mois -> 1500 messages`
 - Page admin pour approuver ou rejeter les paiements.
-- E-mails admin + utilisateur pour les demandes et validations.
+- E-mails admin + utilisateur pour les demandes, validations et OTP.
 
 ## Installation
 
@@ -92,7 +92,24 @@ Variables importantes:
 - `ADMIN_PASSWORD`: mot de passe de la page admin.
 - `ADMIN_JWT_SECRET`: recommandé pour séparer les sessions admin.
 - `ANTHROPIC_API_KEY`: obligatoire pour le chat.
-- `EMAIL_HOST`, `EMAIL_USER`, `EMAIL_PASS`: requis pour les notifications e-mail.
+- `BREVO_API_KEY`: recommandé sur Render pour contourner le blocage SMTP.
+- `EMAIL_HOST`, `EMAIL_USER`, `EMAIL_PASS`: utilisés seulement si vous gardez le fallback SMTP.
+- `EMAIL_FROM`: adresse d’expéditeur visible par les utilisateurs.
+- `CONTACT_RECEIVER_EMAIL`: boîte qui reçoit les messages de contact et les alertes admin.
+- `EMAIL_OTP_LENGTH`: longueur du code OTP e-mail. Valeur courante: `6`.
+- `EMAIL_OTP_TTL_MINUTES`: durée de validité du code OTP. Valeur courante: `10`.
+
+Si vous déployez sur Render, le plus simple est:
+- `BREVO_API_KEY`: la clé API Brevo générée dans votre compte Brevo.
+- `EMAIL_FROM`: un expéditeur validé chez Brevo, par exemple `DevAI <no-reply@votre-domaine.com>`.
+- `CONTACT_RECEIVER_EMAIL`: votre boîte admin réelle, celle qui recevra les contacts et les notifications.
+- `FRONTEND_URL`: l’URL publique du frontend, par exemple `https://votre-site.com` ou `https://votre-app.onrender.com`.
+- `ALLOWED_ORIGINS`: la liste des origines web autorisées à appeler l’API.
+
+Si vous restez en SMTP local:
+- remplissez `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`;
+- laissez `BREVO_API_KEY` vide;
+- gardez `EMAIL_FROM` sur une adresse liée au serveur SMTP utilisé.
 
 ### 3. Lancement
 
@@ -231,9 +248,66 @@ Autrement dit, le mode `deep_research` peut déjà s'appuyer sur le web, mais il
 Le module [`utils/email.js`](./utils/email.js) gère :
 - l'e-mail de bienvenue ;
 - l'e-mail de réinitialisation de mot de passe.
+- l'e-mail de vérification OTP à l'inscription ;
+- l'e-mail OTP de réinitialisation du mot de passe ;
+- les notifications admin et utilisateur liées aux paiements.
 
-Le lien de reset pointe vers :
-- `${FRONTEND_URL}/reset-password.html?token=...`
+Sur Render, l’envoi prioritaire passe par l’API HTTP Brevo via `BREVO_API_KEY`.
+Le SMTP classique ne sert qu’en fallback local si `BREVO_API_KEY` n’est pas défini.
+
+Le flux de réinitialisation utilise maintenant un OTP envoyé par e-mail plutôt qu’un lien de type token.
+
+Le flux d’inscription est le suivant :
+1. l'utilisateur crée son compte ;
+2. le backend envoie un OTP de vérification ;
+3. le compte est activé seulement après validation du code.
+
+Le flux de reset est le suivant :
+1. l'utilisateur demande un code OTP ;
+2. il saisit le code et son nouveau mot de passe ;
+3. le backend valide le code puis met à jour le mot de passe.
+
+## Intégration Dans Une App De Discussion
+
+Pour intégrer DevAI dans une autre application de discussion, le point d’entrée principal est `POST /api/chat`.
+
+Séquence recommandée :
+1. authentifier l’utilisateur avec `POST /api/auth/register` puis `POST /api/auth/verify-email`, ou `POST /api/auth/login` ;
+2. stocker le JWT retourné côté client ;
+3. créer ou charger une conversation via `POST /api/conversations` et `GET /api/conversations` ;
+4. envoyer les messages avec `POST /api/chat` ;
+5. récupérer l’état d’usage via `GET /api/billing/status` pour afficher les quotas.
+
+Le backend renvoie aussi des métadonnées utiles pour une interface de chat moderne :
+- `mode`
+- `intent`
+- `researchPlan`
+- `webResearch`
+- `usage`
+- `billingSource`
+
+Exemple minimal d’envoi de message :
+
+```js
+await fetch('/api/chat', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  },
+  body: JSON.stringify({
+    conversationId,
+    message: 'Explique cette erreur React.',
+    mode: 'code',
+  }),
+});
+```
+
+Pour une app de discussion custom, il faut surtout gérer :
+- l’état du JWT ;
+- l’ID de conversation ;
+- l’affichage des quotas ;
+- la navigation vers `payment.html` quand `usage.blocked` devient vrai.
 
 ## Sécurité
 

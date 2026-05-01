@@ -1,15 +1,27 @@
-const CACHE_NAME = 'devai-static-v20260429';
+const CACHE_NAME = 'devai-static-v20260501';
 const APP_SHELL = [
   '/',
   '/index.html',
+  '/app',
+  '/app/',
+  '/app/index.html',
+  '/payment',
+  '/payment/',
+  '/payment/index.html',
+  '/admin',
+  '/admin/',
+  '/admin/index.html',
+  '/reset-password',
+  '/reset-password/',
+  '/reset-password/index.html',
   '/app.html',
   '/payment.html',
   '/admin.html',
   '/reset-password.html',
   '/landing.css?v=20260426',
   '/landing.js?v=20260426',
-  '/style.css?v=20260429',
-  '/app.js?v=20260429',
+  '/style.css?v=20260501',
+  '/app.js?v=20260501',
   '/payment.js?v=20260429',
   '/admin.js?v=20260429',
   '/devai-mark.svg?v=20260426',
@@ -47,7 +59,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           return response;
         })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match('/app.html')))
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/app') || caches.match('/app/')))
     );
     return;
   }

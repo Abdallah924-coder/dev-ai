@@ -12,6 +12,12 @@
 const API_URL = resolveApiUrl();
 const INSIGHTS_AUTO_HIDE_MS = 8000;
 const MESSAGE_MAX_LENGTH = 1500;
+const ARTIFACT_MIN_LENGTH = 700;
+const ARTIFACT_MIN_LINES = 18;
+
+const messageStore = new Map();
+let messageStoreCounter = 0;
+let activeArtifactId = null;
 
 function resolveApiUrl() {
   if (window.DEVAI_API_URL) return stripTrailingSlash(window.DEVAI_API_URL);
@@ -167,7 +173,7 @@ async function doForgot() {
     await api('POST', '/auth/forgot-password', { email: em });
     suc.textContent = `✓ Si ce compte existe, un email a été envoyé à ${em}.`;
     setBtn(btn, false, 'Envoyer le code');
-    window.location.href = `reset-password.html?email=${encodeURIComponent(em)}`;
+    window.location.href = `/reset-password?email=${encodeURIComponent(em)}`;
   } catch (e) {
     showError(err, e.message);
     const btn = document.querySelector('#panel-forgot .btn-primary');
@@ -257,6 +263,7 @@ function showVerificationPanel(email, message = '') {
   $('verify-error').textContent = '';
   $('verify-success').textContent = message;
   showPanel('panel-verify-email');
+  setTimeout(() => $('verify-otp')?.focus(), 0);
 }
 
 function getDisplayName() {
@@ -364,7 +371,7 @@ async function setupServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
 
   try {
-    const registration = await navigator.serviceWorker.register('/sw.js?v=20260426');
+    const registration = await navigator.serviceWorker.register('/sw.js?v=20260501');
     registration.update().catch(() => {});
   } catch (error) {
     console.warn('Service worker indisponible:', error.message);
@@ -522,9 +529,10 @@ function appendMessage(role, content, options = {}) {
   const roleName = role === 'user'
     ? getDisplayName()
     : 'DevAI';
-  const safeHtml = role === 'ai'
-    ? parseMarkdown(content)
-    : wrapPlainText(content);
+  const display = role === 'ai'
+    ? buildAiDisplay(content)
+    : { html: wrapPlainText(content), artifact: null };
+  const messageId = role === 'ai' ? storeMessageContent(content) : null;
   const metaHtml = buildMessageMetaHtml(createdAt, meta, role);
 
   div.innerHTML = `
@@ -534,15 +542,16 @@ function appendMessage(role, content, options = {}) {
         <div class="msg-role">${roleName}</div>
         <div class="msg-head-actions">
           <span class="msg-time">${formatMessageTime(createdAt)}</span>
-          ${role === 'ai' ? `<button class="msg-action-btn" type="button" onclick="copyMessage(this)" data-copy="${escapeAttr(content)}">Copier</button>` : ''}
+          ${role === 'ai' ? buildAiActionButtons({ messageId, artifact: display.artifact }) : ''}
         </div>
       </div>
-      <div class="msg-text">${safeHtml}</div>
+      <div class="msg-text">${display.html}</div>
       ${metaHtml}
     </div>`;
   container.appendChild(div);
   if (role === 'ai') typesetMath(div);
   if (scroll) container.scrollTop = container.scrollHeight;
+  return div;
 }
 
 function showTyping() {
@@ -591,22 +600,37 @@ async function sendMessage() {
   updateComposerMeta();
   setLoading(true);
   appendMessage('user', normalizedText);
-  showTyping();
+  const streamMessage = createStreamingMessage();
 
   try {
-    const data = await api('POST', '/chat', {
+    const response = await fetch(`${API_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(state.token ? { 'Authorization': `Bearer ${state.token}` } : {}),
+      },
+      body: JSON.stringify({
       conversationId: state.activeConvId,
       message: normalizedText,
       mode: state.currentMode,
+      }),
     });
-    removeTyping();
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}));
+      const error = new Error(errorPayload.error || `Erreur ${response.status}`);
+      error.status = response.status;
+      error.payload = errorPayload;
+      throw error;
+    }
+
+    const data = await consumeChatStream(response, streamMessage);
     const replyMeta = {
       mode: data.mode,
       intent: data.intent,
       researchPlan: data.researchPlan || [],
       webResearch: data.webResearch || { performed: false, sources: [] },
     };
-    appendMessage('ai', data.reply, { meta: replyMeta });
     state.lastReplyMeta = replyMeta;
     renderConversationMeta(replyMeta);
     if (data.usage) applyUsageData(data.usage);
@@ -614,6 +638,11 @@ async function sendMessage() {
     // Mettre à jour le titre si généré automatiquement
     const conv = state.conversations.find(c => c._id === state.activeConvId);
     if (conv) {
+      conv.messages = conv.messages || [];
+      conv.messages.push(
+        { role: 'user', content: normalizedText, createdAt: new Date().toISOString() },
+        { role: 'ai', content: data.reply, createdAt: new Date().toISOString() },
+      );
       conv.mode = data.mode || conv.mode;
       conv.lastIntent = data.intent || conv.lastIntent;
       conv.lastResearchPlan = data.researchPlan || conv.lastResearchPlan || [];
@@ -625,7 +654,7 @@ async function sendMessage() {
       renderConvList();
     }
   } catch (e) {
-    removeTyping();
+    removeStreamingMessage(streamMessage);
     if (e.payload?.usage) applyUsageData(e.payload.usage);
     appendMessage('ai', `⚠️ ${e.message}`, {
       meta: {
@@ -779,7 +808,7 @@ async function refreshUsageStatus() {
 }
 
 function goToPaymentPage() {
-  window.location.href = 'payment.html';
+  window.location.href = '/payment';
 }
 
 function formatResetTime(value) {
@@ -903,6 +932,96 @@ function escapeAttr(value) {
   return escHtml(value).replace(/'/g, '&#39;');
 }
 
+function storeMessageContent(text) {
+  const id = `msg-${++messageStoreCounter}`;
+  messageStore.set(id, String(text || ''));
+  return id;
+}
+
+function readStoredMessage(messageId) {
+  return messageStore.get(messageId) || '';
+}
+
+function containsCodeFence(text) {
+  return /```[\s\S]*?```/.test(String(text || ''));
+}
+
+function shouldCreateArtifact(text) {
+  const value = String(text || '');
+  return containsCodeFence(value)
+    || value.length >= ARTIFACT_MIN_LENGTH
+    || value.split('\n').length >= ARTIFACT_MIN_LINES;
+}
+
+function stripMarkdownForPreview(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/[*#>-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildArtifact(content) {
+  if (!shouldCreateArtifact(content)) return null;
+
+  const codeFenceMatches = [...String(content || '').matchAll(/```(\w+)?\n?([\s\S]*?)```/g)];
+  const firstLanguage = (codeFenceMatches[0]?.[1] || '').toLowerCase();
+  const preview = stripMarkdownForPreview(content);
+  const summary = containsCodeFence(content)
+    ? 'Contenu long déplacé dans un artifact pour garder la conversation lisible.'
+    : `${preview.slice(0, 260)}${preview.length > 260 ? '…' : ''}`;
+
+  return {
+    title: containsCodeFence(content) ? 'Artifact code' : 'Artifact texte',
+    kind: containsCodeFence(content) ? 'code' : 'text',
+    language: firstLanguage || null,
+    summary,
+  };
+}
+
+function buildAiDisplay(content) {
+  const artifact = buildArtifact(content);
+  if (!artifact) {
+    return { html: parseMarkdown(content), artifact: null };
+  }
+
+  return {
+    artifact,
+    html: `
+      <div class="artifact-preview">
+        <div class="artifact-preview-label">${artifact.kind === 'code' ? 'Artifact code' : 'Artifact texte long'}</div>
+        <p>${escHtml(artifact.summary)}</p>
+      </div>
+    `,
+  };
+}
+
+function buildAiActionButtons({ messageId, artifact }) {
+  const buttons = [
+    `<button class="msg-action-btn" type="button" onclick="copyMessage(this)" data-message-id="${escapeAttr(messageId)}">Copier</button>`,
+  ];
+
+  if (artifact) {
+    buttons.push(`
+      <button
+        class="msg-action-btn"
+        type="button"
+        onclick="openArtifactFromButton(this)"
+        data-message-id="${escapeAttr(messageId)}"
+        data-artifact-title="${escapeAttr(artifact.title)}"
+        data-artifact-kind="${escapeAttr(artifact.kind)}"
+        data-artifact-language="${escapeAttr(artifact.language || '')}"
+      >
+        Ouvrir l'artifact
+      </button>
+    `);
+  }
+
+  return buttons.join('');
+}
+
 function wrapPlainText(text) {
   return escHtml(text).replace(/\n/g, '<br>');
 }
@@ -972,6 +1091,200 @@ function parseMarkdown(text) {
   }).join('');
 
   return html.replace(/__CODE_BLOCK_(\d+)__/g, (_, index) => codeBlocks[Number(index)] || '');
+}
+
+function createStreamingMessage() {
+  const node = appendMessage('ai', '', { scroll: true, meta: null });
+  node.classList.add('streaming');
+  const textNode = node.querySelector('.msg-text');
+  const actionsNode = node.querySelector('.msg-head-actions');
+  const metaNode = node.querySelector('.msg-meta');
+  if (actionsNode) {
+    const buttons = actionsNode.querySelectorAll('.msg-action-btn');
+    buttons.forEach(button => button.remove());
+  }
+  if (metaNode) metaNode.remove();
+  if (textNode) textNode.innerHTML = '<div class="streaming-placeholder">Réponse en cours…</div>';
+
+  return {
+    node,
+    textNode,
+    queue: [],
+    rawText: '',
+    renderTimer: null,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function splitStreamingText(text) {
+  return String(text || '').match(/\S+\s*|\n/g) || [];
+}
+
+function drainStreamingQueue(streamMessage) {
+  if (!streamMessage?.textNode) return;
+  if (streamMessage.renderTimer) return;
+
+  const renderNext = () => {
+    if (!streamMessage.queue.length) {
+      streamMessage.renderTimer = null;
+      return;
+    }
+
+    streamMessage.rawText += streamMessage.queue.shift();
+    streamMessage.textNode.innerHTML = wrapPlainText(streamMessage.rawText);
+    scrollMessagesToBottom();
+    streamMessage.renderTimer = window.setTimeout(renderNext, 24);
+  };
+
+  renderNext();
+}
+
+function updateStreamingMessage(streamMessage, deltaText) {
+  if (!streamMessage?.textNode) return;
+  streamMessage.queue.push(...splitStreamingText(deltaText));
+  drainStreamingQueue(streamMessage);
+}
+
+function waitForStreamingQueue(streamMessage) {
+  if (!streamMessage) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!streamMessage.queue.length && !streamMessage.renderTimer) {
+        resolve();
+        return;
+      }
+      window.setTimeout(check, 20);
+    };
+    check();
+  });
+}
+
+function finalizeStreamingMessage(streamMessage, content, meta) {
+  if (!streamMessage?.node || !streamMessage.textNode) return;
+  window.clearTimeout(streamMessage.renderTimer);
+  streamMessage.renderTimer = null;
+  streamMessage.rawText = String(content || '');
+  const display = buildAiDisplay(content);
+  const messageId = storeMessageContent(content);
+  streamMessage.node.classList.remove('streaming');
+  streamMessage.textNode.innerHTML = display.html;
+
+  const actionsNode = streamMessage.node.querySelector('.msg-head-actions');
+  if (actionsNode) {
+    const timeNode = actionsNode.querySelector('.msg-time');
+    actionsNode.innerHTML = `${timeNode ? timeNode.outerHTML : ''}${buildAiActionButtons({ messageId, artifact: display.artifact })}`;
+  }
+
+  const contentNode = streamMessage.node.querySelector('.msg-content');
+  if (contentNode) {
+    const oldMetaNode = contentNode.querySelector('.msg-meta');
+    if (oldMetaNode) oldMetaNode.remove();
+    const metaHtml = buildMessageMetaHtml(streamMessage.createdAt, meta, 'ai');
+    if (metaHtml) contentNode.insertAdjacentHTML('beforeend', metaHtml);
+  }
+
+  typesetMath(streamMessage.node);
+  scrollMessagesToBottom();
+}
+
+function removeStreamingMessage(streamMessage) {
+  if (!streamMessage) return;
+  window.clearTimeout(streamMessage.renderTimer);
+  streamMessage.node?.remove();
+}
+
+async function consumeChatStream(response, streamMessage) {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('text/event-stream')) {
+    return response.json();
+  }
+
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let meta = null;
+  let donePayload = null;
+
+  const processEventBlock = async (rawEvent) => {
+    const event = parseBrowserSseEvent(rawEvent);
+    if (!event?.data) return;
+    const payload = JSON.parse(event.data);
+
+    if (event.event === 'meta') {
+      meta = payload;
+      return;
+    }
+
+    if (event.event === 'delta') {
+      updateStreamingMessage(streamMessage, payload.text || '');
+      return;
+    }
+
+    if (event.event === 'error') {
+      throw Object.assign(new Error(payload.error || 'Erreur de streaming IA.'), { payload });
+    }
+
+    if (event.event === 'done') {
+      donePayload = payload;
+    }
+  };
+
+  while (reader) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n/g, '\n');
+
+    while (buffer.includes('\n\n')) {
+      const boundaryIndex = buffer.indexOf('\n\n');
+      const rawEvent = buffer.slice(0, boundaryIndex);
+      buffer = buffer.slice(boundaryIndex + 2);
+      await processEventBlock(rawEvent);
+    }
+
+    if (done) break;
+  }
+
+  if (buffer.trim()) {
+    await processEventBlock(buffer.trim());
+  }
+
+  await waitForStreamingQueue(streamMessage);
+
+  const finalPayload = donePayload || meta;
+  if (!finalPayload?.reply) {
+    throw new Error('La réponse IA est incomplète.');
+  }
+
+  finalizeStreamingMessage(streamMessage, finalPayload.reply, {
+    mode: finalPayload.mode,
+    intent: finalPayload.intent,
+    researchPlan: finalPayload.researchPlan || [],
+    webResearch: finalPayload.webResearch || { performed: false, sources: [] },
+  });
+
+  return finalPayload;
+}
+
+function parseBrowserSseEvent(rawEvent) {
+  const lines = String(rawEvent || '').split('\n');
+  let event = 'message';
+  const dataLines = [];
+
+  for (const line of lines) {
+    if (!line) continue;
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+
+  return {
+    event,
+    data: dataLines.join('\n'),
+  };
 }
 
 function formatMessageTime(value) {
@@ -1111,7 +1424,7 @@ function toggleInsights() {
 }
 
 async function copyMessage(button) {
-  const text = button?.dataset?.copy || '';
+  const text = readStoredMessage(button?.dataset?.messageId);
   if (!text) return;
 
   try {
@@ -1123,6 +1436,43 @@ async function copyMessage(button) {
     }, 1200);
   } catch (error) {
     console.warn('Copie impossible:', error.message);
+  }
+}
+
+function openArtifactFromButton(button) {
+  const messageId = button?.dataset?.messageId;
+  const content = readStoredMessage(messageId);
+  if (!content) return;
+
+  activeArtifactId = messageId;
+  $('artifact-title').textContent = button.dataset.artifactTitle || 'Artifact';
+  $('artifact-meta').textContent = button.dataset.artifactLanguage
+    ? `${button.dataset.artifactKind || 'text'} • ${button.dataset.artifactLanguage}`
+    : (button.dataset.artifactKind || 'text');
+  $('artifact-body').innerHTML = parseMarkdown(content);
+  $('artifact-modal').classList.remove('hidden');
+  typesetMath($('artifact-body'));
+}
+
+function closeArtifact() {
+  activeArtifactId = null;
+  $('artifact-modal').classList.add('hidden');
+}
+
+async function copyArtifact() {
+  const text = readStoredMessage(activeArtifactId);
+  if (!text) return;
+
+  try {
+    await navigator.clipboard.writeText(text);
+    const button = $('artifact-copy-btn');
+    const previous = button.textContent;
+    button.textContent = 'Copié';
+    setTimeout(() => {
+      button.textContent = previous;
+    }, 1200);
+  } catch (error) {
+    console.warn('Copie artifact impossible:', error.message);
   }
 }
 
@@ -1162,11 +1512,15 @@ document.addEventListener('click', (e) => {
   const menu  = $('profile-menu');
   const pill  = document.querySelector('.user-pill');
   const modal = $('profile-modal');
+  const artifactModal = $('artifact-modal');
   if (menu?.classList.contains('open') && !menu.contains(e.target) && !pill?.contains(e.target)) {
     closeProfileMenu();
   }
   if (modal && !modal.classList.contains('hidden') && e.target === modal) {
     closeProfile();
+  }
+  if (artifactModal && !artifactModal.classList.contains('hidden') && e.target === artifactModal) {
+    closeArtifact();
   }
 });
 
@@ -1189,6 +1543,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeSidebar();
     closeProfileMenu();
+    closeArtifact();
   }
 });
 

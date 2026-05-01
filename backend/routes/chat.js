@@ -38,6 +38,33 @@ const chatLimiter = rateLimit({
   message: { error: 'Trop de messages envoyés. Attendez un moment.' },
 });
 
+function sendStreamEvent(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function parseSseEvent(rawEvent) {
+  const lines = String(rawEvent || '').split('\n');
+  let event = 'message';
+  const dataLines = [];
+
+  for (const line of lines) {
+    if (!line) continue;
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+
+  return {
+    event,
+    data: dataLines.join('\n'),
+  };
+}
+
 function getApiKey() {
   const apiKey = String(process.env.ANTHROPIC_API_KEY || '').trim();
   if (!apiKey || apiKey === 'sk-ant-...' || apiKey.includes('votre_')) {
@@ -133,6 +160,7 @@ router.post('/', chatLimiter, async (req, res, next) => {
         max_tokens: requestConfig.max_tokens,
         system: systemPrompt,
         messages: apiMessages,
+        stream: true,
       }),
     });
 
@@ -143,16 +171,12 @@ router.post('/', chatLimiter, async (req, res, next) => {
       return res.status(502).json({ error: `Erreur de l'IA : ${errMsg}` });
     }
 
-    const data = await anthropicRes.json();
-    const aiText = data.content?.[0]?.text || '';
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
 
-    // Sauvegarder la réponse de l'IA
-    conv.messages.push({ role: 'ai', content: aiText });
-    conv.summary = buildConversationSummaryAfterReply(conv);
-    await conv.save();
-
-    res.json({
-      reply: aiText,
+    sendStreamEvent(res, 'meta', {
       conversationId: conv._id,
       title: conv.title,
       mode: conv.mode,
@@ -170,7 +194,91 @@ router.post('/', chatLimiter, async (req, res, next) => {
       maxMessageLength: MESSAGE_MAX_LENGTH,
     });
 
+    let aiText = '';
+    let sseBuffer = '';
+
+    await new Promise((resolve, reject) => {
+      anthropicRes.body.on('data', (chunk) => {
+        sseBuffer += chunk.toString('utf8').replace(/\r\n/g, '\n');
+
+        while (sseBuffer.includes('\n\n')) {
+          const boundaryIndex = sseBuffer.indexOf('\n\n');
+          const rawEvent = sseBuffer.slice(0, boundaryIndex);
+          sseBuffer = sseBuffer.slice(boundaryIndex + 2);
+
+          const parsed = parseSseEvent(rawEvent);
+          if (!parsed.data || parsed.data === '[DONE]') continue;
+
+          let payload;
+          try {
+            payload = JSON.parse(parsed.data);
+          } catch (parseError) {
+            continue;
+          }
+
+          if (parsed.event === 'content_block_delta' && payload?.delta?.type === 'text_delta') {
+            const deltaText = payload.delta.text || '';
+            if (!deltaText) continue;
+            aiText += deltaText;
+            sendStreamEvent(res, 'delta', { text: deltaText });
+          }
+        }
+      });
+
+      anthropicRes.body.on('end', () => {
+        if (sseBuffer.trim()) {
+          const parsed = parseSseEvent(sseBuffer.trim());
+          if (parsed.data && parsed.data !== '[DONE]') {
+            try {
+              const payload = JSON.parse(parsed.data);
+              if (parsed.event === 'content_block_delta' && payload?.delta?.type === 'text_delta') {
+                const deltaText = payload.delta.text || '';
+                if (deltaText) {
+                  aiText += deltaText;
+                  sendStreamEvent(res, 'delta', { text: deltaText });
+                }
+              }
+            } catch (parseError) {
+              // Ignore incomplete trailing SSE payloads.
+            }
+          }
+        }
+        resolve();
+      });
+      anthropicRes.body.on('error', reject);
+    });
+
+    conv.messages.push({ role: 'ai', content: aiText });
+    conv.summary = buildConversationSummaryAfterReply(conv);
+    await conv.save();
+
+    sendStreamEvent(res, 'done', {
+      reply: aiText,
+      conversationId: conv._id,
+      title: conv.title,
+      mode: conv.mode,
+      intent: conv.lastIntent,
+      researchPlan: conv.lastResearchPlan,
+      webResearch: {
+        performed: webResearch.performed,
+        provider: webResearch.provider || null,
+        error: webResearch.error || null,
+        sources: webResearch.results || [],
+      },
+      usage: billingResult.usage,
+      billingSource: billingResult.source,
+      messageWasTrimmed: normalizedMessage.wasTrimmed,
+      maxMessageLength: MESSAGE_MAX_LENGTH,
+    });
+    res.end();
+
   } catch (err) {
+    if (res.headersSent) {
+      sendStreamEvent(res, 'error', {
+        error: err.message || 'Erreur de streaming IA.',
+      });
+      return res.end();
+    }
     if (err.usage) {
       return res.status(err.status || 400).json({ error: err.message, usage: err.usage });
     }

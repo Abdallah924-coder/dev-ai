@@ -4,13 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>DevAI — WORLDIFYAI</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260426" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20260426" />
   <meta name="theme-color" content="#0b0b0d" />
-  <link rel="stylesheet" href="style.css?v=20260501" />
+  <link rel="stylesheet" href="/style.css?v=20260501" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Tiempos+Text:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
-  <!-- Anthropic uses a custom font; we use the closest Google Font match -->
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap');
   </style>
@@ -18,14 +17,10 @@
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 </head>
 <body>
-
-<!-- ═══════════════════════════════════════════════
-     AUTH OVERLAY
-═══════════════════════════════════════════════ -->
 <div id="auth-overlay" class="auth-overlay">
   <div class="auth-brand">
     <div class="auth-logo">
-      <img src="devai-mark.svg?v=20260426" alt="Logo DevAI" width="42" height="42"/>
+      <img src="/devai-mark.svg?v=20260426" alt="Logo DevAI" width="42" height="42"/>
     </div>
     <div>
       <div class="auth-brand-name">DevAI</div>
@@ -33,7 +28,6 @@
     </div>
   </div>
 
-  <!-- Login Panel -->
   <div id="panel-login" class="auth-panel active">
     <h1 class="auth-title">Bon retour.</h1>
     <p class="auth-desc">Connectez-vous pour continuer avec DevAI.</p>
@@ -53,7 +47,6 @@
     </div>
   </div>
 
-  <!-- Register Panel -->
   <div id="panel-register" class="auth-panel">
     <h1 class="auth-title">Créer un compte.</h1>
     <p class="auth-desc">Rejoignez DevAI — l'IA qui comprend vos défis.</p>
@@ -106,7 +99,6 @@
     </div>
   </div>
 
-  <!-- Forgot Password Panel -->
   <div id="panel-forgot" class="auth-panel">
     <h1 class="auth-title">Réinitialiser.</h1>
     <p class="auth-desc">Entrez votre e-mail pour recevoir un code OTP de réinitialisation.</p>
@@ -158,19 +150,15 @@
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
-     MAIN APP
-═══════════════════════════════════════════════ -->
 <div id="app" class="app hidden">
   <div class="sidebar-backdrop hidden" id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
-  <!-- SIDEBAR -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="sidebar-brand-row">
         <div class="sidebar-brand">
-        <img src="devai-mark.svg?v=20260426" alt="Logo DevAI" width="28" height="28"/>
-        <span>DevAI</span>
+          <img src="/devai-mark.svg?v=20260426" alt="Logo DevAI" width="28" height="28"/>
+          <span>DevAI</span>
         </div>
         <button class="btn-icon sidebar-close" onclick="closeSidebar()" title="Fermer le menu">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -236,7 +224,6 @@
     </div>
   </aside>
 
-  <!-- MAIN CHAT AREA -->
   <main class="chat-area">
     <div class="chat-topbar">
       <button class="btn-icon" onclick="toggleSidebar()" title="Menu">
@@ -246,12 +233,8 @@
       </button>
       <div class="chat-title" id="chat-title">Nouvelle discussion</div>
       <div class="chat-topbar-actions">
-        <button class="btn-ghost" id="scroll-bottom-btn" onclick="scrollMessagesToBottom()" title="Aller en bas">
-          Bas
-        </button>
-        <button class="btn-ghost hidden" id="insights-toggle-btn" onclick="toggleInsights()" title="Afficher ou masquer le contexte">
-          Contexte
-        </button>
+        <button class="btn-ghost" id="scroll-bottom-btn" onclick="scrollMessagesToBottom()" title="Aller en bas">Bas</button>
+        <button class="btn-ghost hidden" id="insights-toggle-btn" onclick="toggleInsights()" title="Afficher ou masquer le contexte">Contexte</button>
         <div class="chat-mode-picker">
           <label for="chat-mode">Mode</label>
           <select id="chat-mode" onchange="setChatMode(this.value)">
@@ -282,10 +265,9 @@
       </div>
     </section>
 
-    <!-- Welcome screen -->
     <div class="welcome-screen" id="welcome-screen">
-    <div class="welcome-logo">
-        <img src="devai-mark.svg?v=20260426" alt="Logo DevAI" width="56" height="56"/>
+      <div class="welcome-logo">
+        <img src="/devai-mark.svg?v=20260426" alt="Logo DevAI" width="56" height="56"/>
       </div>
       <h2 class="welcome-title">Bonjour, <span id="welcome-name">Devoué</span> 👋</h2>
       <p class="welcome-sub">Je suis DevAI, votre assistant IA spécialisé en mathématiques et programmation.<br>Comment puis-je vous aider aujourd'hui ?</p>
@@ -309,10 +291,8 @@
       </div>
     </div>
 
-    <!-- Messages -->
     <div class="messages" id="messages"></div>
 
-    <!-- Input bar -->
     <div class="input-area">
       <div class="quota-banner hidden" id="quota-banner">
         <div>
@@ -325,13 +305,7 @@
         </div>
       </div>
       <div class="input-box">
-        <textarea
-          id="chat-input"
-          placeholder="Posez une question en maths ou en programmation…"
-          rows="1"
-          onkeydown="handleKey(event)"
-          oninput="autoResize(this)"
-        ></textarea>
+        <textarea id="chat-input" placeholder="Posez une question en maths ou en programmation…" rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="send-btn" id="send-btn" onclick="sendMessage()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
             <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -347,7 +321,6 @@
   </main>
 </div>
 
-<!-- PROFILE MODAL -->
 <div id="profile-modal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
@@ -416,6 +389,6 @@
 <script>
   window.DEVAI_API_URL = "https://dev-ai-yhby.onrender.com/api";
 </script>
-<script src="app.js?v=20260501"></script>
+<script src="/app.js?v=20260501"></script>
 </body>
 </html>
