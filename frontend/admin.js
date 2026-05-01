@@ -58,6 +58,16 @@ async function loadOverview() {
   document.getElementById('admin-users-count').textContent = String(data.counts.usersCount || 0);
 }
 
+function formatAdminDate(value) {
+  if (!value) return 'Jamais';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Inconnue';
+  return parsed.toLocaleString('fr-FR', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
 async function viewProof(requestId) {
   const blob = await api('GET', `/admin/payment-requests/${requestId}/proof`, null, true);
   const url = URL.createObjectURL(blob);
@@ -120,10 +130,40 @@ function renderRequests(requests) {
   });
 }
 
+function renderUsers(users) {
+  const container = document.getElementById('admin-users-list');
+  if (!users.length) {
+    container.innerHTML = '<div class="portal-empty">Aucun utilisateur.</div>';
+    return;
+  }
+
+  container.innerHTML = users.map((user) => `
+    <article class="admin-request-card">
+      <div class="admin-request-head">
+        <div>
+          <strong>${user.preferredName || user.firstname || 'Utilisateur'}</strong>
+          <p>${user.firstname || ''} ${user.lastname || ''} • ${user.email || ''}</p>
+        </div>
+        <span class="admin-status status-${user.emailVerified ? 'approved' : 'pending'}">${user.emailVerified ? 'verifié' : 'non vérifié'}</span>
+      </div>
+      <div class="admin-request-grid">
+        <span>E-mail: ${user.email || 'Non renseigné'}</span>
+        <span>Créé le: ${formatAdminDate(user.createdAt)}</span>
+        <span>Dernière connexion: ${formatAdminDate(user.lastLoginAt)}</span>
+        <span>Crédits package: ${user.usage?.packageCredits ?? 0}</span>
+      </div>
+    </article>
+  `).join('');
+}
+
 async function loadAdminData() {
   await loadOverview();
-  const data = await api('GET', '/admin/payment-requests');
-  renderRequests(data.paymentRequests || []);
+  const [requestsData, usersData] = await Promise.all([
+    api('GET', '/admin/payment-requests'),
+    api('GET', '/admin/users'),
+  ]);
+  renderRequests(requestsData.paymentRequests || []);
+  renderUsers(usersData.users || []);
 }
 
 document.getElementById('admin-login-form').addEventListener('submit', async (event) => {

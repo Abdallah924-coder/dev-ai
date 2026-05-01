@@ -136,6 +136,13 @@ function rememberCurrentPassword(user) {
   user.passwordHistory = Array.from(history);
 }
 
+function applyNewPassword(user, plainPassword) {
+  rememberCurrentPassword(user);
+  user.set('password', plainPassword);
+  user.markModified('password');
+  user.markModified('passwordHistory');
+}
+
 // ══════════════════════════════════════
 // POST /api/auth/register
 // ══════════════════════════════════════
@@ -404,8 +411,7 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Vous ne pouvez pas réutiliser un ancien mot de passe.' });
     }
 
-    rememberCurrentPassword(user);
-    user.password             = password;
+    applyNewPassword(user, password);
     clearPasswordResetOtp(user);
     await user.save();
 
@@ -499,8 +505,7 @@ router.put('/profile', authMW, async (req, res, next) => {
       if (await hasUserUsedPassword(user, password)) {
         return res.status(400).json({ error: 'Vous ne pouvez pas réutiliser un ancien mot de passe.' });
       }
-      rememberCurrentPassword(user);
-      user.password = password;
+      applyNewPassword(user, password);
     }
 
     await user.save();

@@ -100,6 +100,17 @@ router.get('/payment-requests', adminAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get('/users', adminAuth, async (req, res, next) => {
+  try {
+    const users = await User.find({})
+      .select('firstname lastname preferredName email emailVerified createdAt lastLoginAt usage')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ users });
+  } catch (err) { next(err); }
+});
+
 router.get('/payment-requests/:id/proof', adminAuth, async (req, res, next) => {
   try {
     const paymentRequest = await PaymentRequest.findById(req.params.id).select('+proofData');

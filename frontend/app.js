@@ -932,9 +932,10 @@ async function saveProfile() {
     if (pw) body.password = pw;
     const data = await api('PUT', '/auth/profile', body);
     state.currentUser = data.user;
+    $('prof-password').value = '';
     updateSidebarUser();
     updateProfileDisplay();
-    suc.textContent = '✓ Profil mis à jour avec succès.';
+    suc.textContent = pw ? '✓ Profil mis à jour. Nouveau mot de passe enregistré.' : '✓ Profil mis à jour avec succès.';
     setBtn(btn, false, 'Enregistrer les modifications');
   } catch (e) {
     showError(err, e.message);
